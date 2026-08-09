@@ -22,13 +22,13 @@ function resolveSiteUrl(): string {
 
 export const SITE_URL = resolveSiteUrl();
 
-export const SITE_NAME = '원가계산기';
+export const SITE_NAME = 'WongaGo';
 
 export const FAQ_ITEMS = [
   {
     question: '음식 원가는 어떻게 계산하나요?',
     answer:
-      '재료의 구매가격을 구매수량으로 나눠 단위 원가(1g당 가격 등)를 구한 뒤, 메뉴에 들어가는 사용량을 곱해 더하면 됩니다. 원가계산기에서는 재료 가격과 사용량만 입력하면 자동으로 계산됩니다.',
+      '재료의 구매가격을 구매수량으로 나눠 단위 원가(1g당 가격 등)를 구한 뒤, 메뉴에 들어가는 사용량을 곱해 더하면 됩니다. WongaGo 음식 원가 계산기에서는 재료 가격과 사용량만 입력하면 자동으로 계산됩니다.',
   },
   {
     question: '음식점 원가율은 어떻게 구하나요?',
@@ -56,8 +56,8 @@ export function webApplicationJsonLd() {
   return {
     '@context': 'https://schema.org',
     '@type': 'WebApplication',
-    name: '음식 원가 계산기',
-    alternateName: SITE_NAME,
+    name: 'WongaGo 음식 원가 계산기',
+    alternateName: ['WongaGo', '원가계산기'],
     url: SITE_URL,
     applicationCategory: 'BusinessApplication',
     operatingSystem: 'Web',

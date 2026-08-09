@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
     default: '음식 원가 계산기 - 무료 메뉴 원가율 계산',
-    template: '%s | 원가계산기',
+    template: '%s | WongaGo',
   },
   description:
     '식재료 가격과 사용량만 입력하면 음식 원가, 원가율, 적정 판매가격을 무료로 계산할 수 있습니다.',
@@ -26,12 +26,12 @@ export const metadata: Metadata = {
     '적정 판매가격 계산기',
     '원가 관리',
   ],
-  applicationName: '원가계산기',
+  applicationName: 'WongaGo',
   alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     locale: 'ko_KR',
-    siteName: '원가계산기',
+    siteName: 'WongaGo',
     title: '음식 원가 계산기 - 무료 메뉴 원가율 계산',
     description:
       '식재료 가격과 사용량만 입력하면 음식 원가, 원가율, 적정 판매가격을 무료로 계산할 수 있습니다.',
