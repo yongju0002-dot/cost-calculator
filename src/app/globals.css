@@ -1,26 +1,77 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-50: #fff6f1;
+  --color-brand-100: #ffe9dd;
+  --color-brand-200: #ffcdb4;
+  --color-brand-300: #ffa87e;
+  --color-brand-400: #ff8347;
+  --color-brand-500: #f96a1b;
+  --color-brand-600: #e05307;
+  --color-brand-700: #b44107;
+  --color-brand-800: #8e340b;
+  --color-brand-900: #742c0d;
+
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e6ebf1;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Noto Sans KR", system-ui,
+    "Segoe UI", Roboto, sans-serif;
+
+  --radius-card: 1rem;
+  --radius-xl2: 1.25rem;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --shadow-pop: 0 10px 40px -12px rgb(15 23 42 / 0.25);
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #ffffff;
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  /* 모바일 하단 고정 네비게이션 높이만큼 여백 확보 */
+  padding-bottom: env(safe-area-inset-bottom);
+  word-break: keep-all;
+}
+
+/* 숫자 입력에서 브라우저 기본 스피너 제거 */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* 숫자는 표 안에서 자리수가 흔들리지 않도록 고정폭 숫자 사용 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
