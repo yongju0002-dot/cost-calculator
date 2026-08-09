@@ -44,6 +44,10 @@ export const metadata: Metadata = {
       '식재료 가격과 사용량만 입력하면 음식 원가, 원가율, 적정 판매가격을 무료로 계산할 수 있습니다.',
   },
   robots: { index: true, follow: true },
+  verification: {
+    // Google Search Console 소유권 확인용
+    google: 'LPJwYHhvoTSr724g82kaUTImCdkMEPiQSUZDn2N9t7s',
+  },
 };
 
 export const viewport: Viewport = {
