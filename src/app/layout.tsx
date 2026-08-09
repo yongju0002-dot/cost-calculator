@@ -47,6 +47,10 @@ export const metadata: Metadata = {
   verification: {
     // Google Search Console 소유권 확인용
     google: 'LPJwYHhvoTSr724g82kaUTImCdkMEPiQSUZDn2N9t7s',
+    other: {
+      // 네이버 서치어드바이저 소유권 확인용
+      'naver-site-verification': '7f21a34cf7162e423fe626e237807fc41eb5ed6c',
+    },
   },
 };
 
