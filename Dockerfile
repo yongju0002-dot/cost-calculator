@@ -10,7 +10,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # 빌드 시점에 metadata/sitemap/robots 에 들어갈 도메인이 필요하다.
-ARG NEXT_PUBLIC_SITE_URL
+# 값을 넘기지 않으면 빈 문자열이 되는데, 그 경우는 src/lib/seo.tsx 에서 기본값으로 처리한다.
+ARG NEXT_PUBLIC_SITE_URL=""
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
 RUN npm run build
 

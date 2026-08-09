@@ -1,5 +1,26 @@
-/** 배포 도메인이 정해지면 NEXT_PUBLIC_SITE_URL 로 교체한다. */
-export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://wonga-calculator.example.com';
+const FALLBACK_SITE_URL = 'https://wonga-calculator.example.com';
+
+/**
+ * 배포 도메인. NEXT_PUBLIC_SITE_URL 로 지정한다.
+ *
+ * 이 값은 metadataBase(new URL)에 그대로 들어가므로 잘못된 값이면 빌드가 실패한다.
+ * 실수하기 쉬운 경우를 모두 흡수한다.
+ *  - 값이 없거나 빈 문자열 (Docker 의 ARG 미지정 시 빈 문자열이 들어온다)
+ *  - http(s):// 를 빼먹은 경우
+ *  - 끝에 경로나 슬래시가 붙은 경우
+ */
+function resolveSiteUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!raw) return FALLBACK_SITE_URL;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(withScheme).origin;
+  } catch {
+    return FALLBACK_SITE_URL;
+  }
+}
+
+export const SITE_URL = resolveSiteUrl();
 
 export const SITE_NAME = '원가계산기';
 
