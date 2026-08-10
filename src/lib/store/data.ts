@@ -3,10 +3,25 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useAuth } from '@/lib/auth/auth';
 import { mergeCategories } from '@/lib/domain/categories';
-import { computeMenuCost } from '@/lib/domain/cost';
+import {
+  applyPricingMode,
+  computeMenuCost,
+  computePrepCost,
+  purchaseUnitCost,
+  type CostSources,
+} from '@/lib/domain/cost';
 import { buildMenuView, type MenuView } from '@/lib/domain/menuView';
 import { createSampleData } from '@/lib/domain/sample';
-import type { AppData, Ingredient, Menu, RecipeItem } from '@/lib/domain/types';
+import type {
+  AppData,
+  Ingredient,
+  Menu,
+  Prep,
+  PricingMode,
+  PurchaseRecord,
+  RecipeItem,
+  Supply,
+} from '@/lib/domain/types';
 import { isUnit, type Unit } from '@/lib/domain/units';
 import { createId, isBrowser, nowIso, readJson, storageKeys, writeJson } from '@/lib/storage/local';
 import { ExternalStore } from './externalStore';
@@ -20,13 +35,54 @@ import { ExternalStore } from './externalStore';
 
 export const GUEST_OWNER = 'guest';
 
-const EMPTY_DATA: AppData = { version: 1, ingredients: [], menus: [], customCategories: [] };
+const EMPTY_DATA: AppData = {
+  version: 2,
+  ingredients: [],
+  menus: [],
+  customCategories: [],
+  preps: [],
+  supplies: [],
+  purchases: [],
+};
 
 export interface IngredientInput {
   name: string;
   price: number;
   quantity: number;
   unit: Unit;
+  memo?: string;
+  supplier?: string;
+  pricingMode?: PricingMode;
+}
+
+export interface SupplyInput {
+  name: string;
+  price: number;
+  quantity: number;
+  unit: Unit;
+  supplier?: string;
+  memo?: string;
+  pricingMode?: PricingMode;
+}
+
+export interface PrepInput {
+  name: string;
+  description?: string;
+  items: RecipeItem[];
+  yieldAmount: number;
+  yieldUnit: Unit;
+  memo?: string;
+  photoUrl?: string;
+}
+
+export interface PurchaseInput {
+  targetType: 'ingredient' | 'supply';
+  targetId: string;
+  purchasedAt: string;
+  supplier?: string;
+  quantity: number;
+  unit: Unit;
+  amount: number;
   memo?: string;
 }
 
@@ -71,6 +127,22 @@ function normalizeData(raw: unknown): AppData {
           }))
       : [],
     customCategories: Array.isArray(data.customCategories) ? data.customCategories : [],
+    // 아래 세 가지는 나중에 추가된 항목이라 기존 데이터에는 없다. 반드시 빈 배열로 채운다.
+    preps: Array.isArray(data.preps)
+      ? data.preps
+          .filter((p) => p && typeof p.id === 'string')
+          .map((p) => ({
+            ...p,
+            items: Array.isArray(p.items) ? p.items : [],
+            costHistory: Array.isArray(p.costHistory) ? p.costHistory : [],
+          }))
+      : [],
+    supplies: Array.isArray(data.supplies)
+      ? data.supplies.filter((s) => s && typeof s.id === 'string' && isUnit(s.unit))
+      : [],
+    purchases: Array.isArray(data.purchases)
+      ? data.purchases.filter((p) => p && typeof p.id === 'string' && isUnit(p.unit))
+      : [],
   };
 }
 
@@ -112,19 +184,49 @@ function toIngredientMap(ingredients: Ingredient[]): Map<string, Ingredient> {
   return new Map(ingredients.map((i) => [i.id, i]));
 }
 
+function toSources(data: AppData): CostSources {
+  return {
+    ingredients: toIngredientMap(data.ingredients),
+    preps: new Map((data.preps ?? []).map((p) => [p.id, p])),
+    supplies: new Map((data.supplies ?? []).map((s) => [s.id, s])),
+  };
+}
+
 /**
- * 재료 변경 후 메뉴 원가를 다시 계산하고, 값이 바뀐 메뉴에는 원가 이력을 남긴다.
- * (재료 가격을 수정하면 관련 메뉴 원가가 자동으로 갱신되는 지점)
+ * 가격이 바뀐 뒤 전체를 다시 계산한다.
+ *
+ * 원가는 아래 순서로 흘러가므로 반드시 이 순서를 지켜야 한다.
+ *   식재료 → 프렙 → 메뉴
+ *   부자재 → 메뉴
+ *
+ * 값이 실제로 달라진 경우에만 이력을 남긴다.
  */
-function recalculateMenus(
-  menus: Menu[],
-  ingredients: Ingredient[],
-): { menus: Menu[]; affected: AffectedMenu[] } {
-  const map = toIngredientMap(ingredients);
+function recalculate(data: AppData): { data: AppData; affected: AffectedMenu[] } {
   const at = nowIso();
+  const ingredientMap = toIngredientMap(data.ingredients);
+
+  // 1) 프렙 원가 갱신
+  const preps = (data.preps ?? []).map((prep) => {
+    const cost = computePrepCost(prep, ingredientMap);
+    const last = prep.costHistory.at(-1);
+    if (last && last.cost === cost) return prep;
+    return {
+      ...prep,
+      costHistory: [...prep.costHistory, { cost, at }].slice(-30),
+      updatedAt: at,
+    };
+  });
+
+  // 2) 갱신된 프렙·부자재를 반영해 메뉴 원가 갱신
+  const sources: CostSources = {
+    ingredients: ingredientMap,
+    preps: new Map(preps.map((p) => [p.id, p])),
+    supplies: new Map((data.supplies ?? []).map((s) => [s.id, s])),
+  };
+
   const affected: AffectedMenu[] = [];
-  const nextMenus = menus.map((menu) => {
-    const currentCost = computeMenuCost(menu, map);
+  const menus = data.menus.map((menu) => {
+    const currentCost = computeMenuCost(menu, sources);
     const last = menu.costHistory.at(-1);
     if (last && last.cost === currentCost) return menu;
     if (last) {
@@ -141,7 +243,8 @@ function recalculateMenus(
       updatedAt: at,
     };
   });
-  return { menus: nextMenus, affected };
+
+  return { data: { ...data, preps, menus }, affected };
 }
 
 export function addIngredient(input: IngredientInput): Ingredient {
@@ -202,29 +305,36 @@ export function updateIngredient(id: string, input: IngredientInput): AffectedMe
         updatedAt: at,
       };
     });
-    const result = recalculateMenus(data.menus, ingredients);
+    const result = recalculate({ ...data, ingredients });
     affected = result.affected;
-    return { ...data, ingredients, menus: result.menus };
+    return result.data;
   });
   return affected;
 }
 
 export function removeIngredient(id: string): void {
-  mutate((data) => ({
-    ...data,
-    ingredients: data.ingredients.filter((i) => i.id !== id),
-    // 삭제된 재료를 쓰던 메뉴는 마지막 가격을 그대로 유지한 채 연결만 끊는다.
-    menus: data.menus.map((menu) =>
-      menu.items.some((item) => item.ingredientId === id)
-        ? {
-            ...menu,
-            items: menu.items.map((item) =>
-              item.ingredientId === id ? { ...item, ingredientId: null } : item,
-            ),
-          }
-        : menu,
-    ),
-  }));
+  mutate((data) => {
+    // 삭제된 재료를 쓰던 메뉴·프렙은 마지막 가격을 그대로 유지한 채 연결만 끊는다.
+    const unlink = (items: RecipeItem[]) =>
+      items.map((item) => (item.ingredientId === id ? { ...item, ingredientId: null } : item));
+    return {
+      ...data,
+      ingredients: data.ingredients.filter((i) => i.id !== id),
+      purchases: (data.purchases ?? []).filter(
+        (p) => !(p.targetType === 'ingredient' && p.targetId === id),
+      ),
+      menus: data.menus.map((menu) =>
+        menu.items.some((item) => item.ingredientId === id)
+          ? { ...menu, items: unlink(menu.items) }
+          : menu,
+      ),
+      preps: (data.preps ?? []).map((prep) =>
+        prep.items.some((item) => item.ingredientId === id)
+          ? { ...prep, items: unlink(prep.items) }
+          : prep,
+      ),
+    };
+  });
 }
 
 export function addMenu(input: MenuInput): Menu {
@@ -244,7 +354,7 @@ export function addMenu(input: MenuInput): Menu {
   };
   const menu: Menu = {
     ...base,
-    costHistory: [{ cost: computeMenuCost(base, toIngredientMap(data.ingredients)), at }],
+    costHistory: [{ cost: computeMenuCost(base, toSources(data)), at }],
   };
   mutate((prev) => ({ ...prev, menus: [menu, ...prev.menus] }));
   return menu;
@@ -254,7 +364,7 @@ export function updateMenu(id: string, input: MenuInput): Menu | null {
   let updated: Menu | null = null;
   mutate((data) => {
     const at = nowIso();
-    const map = toIngredientMap(data.ingredients);
+    const map = toSources(data);
     const menus = data.menus.map((menu) => {
       if (menu.id !== id) return menu;
       const next: Menu = {
@@ -301,6 +411,330 @@ export function removeMenu(id: string): void {
   mutate((data) => ({ ...data, menus: data.menus.filter((m) => m.id !== id) }));
 }
 
+// ─────────────────────────────────────────────────────────
+// 부자재
+// ─────────────────────────────────────────────────────────
+
+export function addSupply(input: SupplyInput): Supply {
+  const at = nowIso();
+  const supply: Supply = {
+    id: createId('sup'),
+    ownerId: store.getSnapshot().ownerId,
+    name: input.name.trim(),
+    price: input.price,
+    quantity: input.quantity,
+    unit: input.unit,
+    supplier: input.supplier?.trim() || undefined,
+    memo: input.memo?.trim() || undefined,
+    pricingMode: input.pricingMode ?? 'manual',
+    priceHistory: [
+      {
+        price: input.price,
+        quantity: input.quantity,
+        unit: input.unit,
+        unitCost: input.quantity > 0 ? input.price / input.quantity : 0,
+        at,
+      },
+    ],
+    createdAt: at,
+    updatedAt: at,
+  };
+  mutate((data) => ({ ...data, supplies: [supply, ...(data.supplies ?? [])] }));
+  return supply;
+}
+
+export function updateSupply(id: string, input: SupplyInput): AffectedMenu[] {
+  let affected: AffectedMenu[] = [];
+  mutate((data) => {
+    const at = nowIso();
+    const supplies = (data.supplies ?? []).map((supply) => {
+      if (supply.id !== id) return supply;
+      const priceChanged =
+        supply.price !== input.price ||
+        supply.quantity !== input.quantity ||
+        supply.unit !== input.unit;
+      return {
+        ...supply,
+        name: input.name.trim(),
+        price: input.price,
+        quantity: input.quantity,
+        unit: input.unit,
+        supplier: input.supplier?.trim() || undefined,
+        memo: input.memo?.trim() || undefined,
+        pricingMode: input.pricingMode ?? supply.pricingMode ?? 'manual',
+        priceHistory: priceChanged
+          ? [
+              ...supply.priceHistory,
+              {
+                price: input.price,
+                quantity: input.quantity,
+                unit: input.unit,
+                unitCost: input.quantity > 0 ? input.price / input.quantity : 0,
+                at,
+              },
+            ].slice(-30)
+          : supply.priceHistory,
+        updatedAt: at,
+      };
+    });
+    const result = recalculate({ ...data, supplies });
+    affected = result.affected;
+    return result.data;
+  });
+  return affected;
+}
+
+export function removeSupply(id: string): void {
+  mutate((data) => ({
+    ...data,
+    supplies: (data.supplies ?? []).filter((s) => s.id !== id),
+    purchases: (data.purchases ?? []).filter(
+      (p) => !(p.targetType === 'supply' && p.targetId === id),
+    ),
+    // 사용 중이던 메뉴는 마지막 가격을 유지한 채 연결만 끊는다.
+    menus: data.menus.map((menu) =>
+      menu.items.some((item) => item.supplyId === id)
+        ? {
+            ...menu,
+            items: menu.items.map((item) =>
+              item.supplyId === id ? { ...item, supplyId: null } : item,
+            ),
+          }
+        : menu,
+    ),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────
+// 프렙
+// ─────────────────────────────────────────────────────────
+
+export function addPrep(input: PrepInput): Prep {
+  const at = nowIso();
+  const { data, ownerId } = store.getSnapshot();
+  const base: Prep = {
+    id: createId('prep'),
+    ownerId,
+    name: input.name.trim(),
+    description: input.description?.trim() || undefined,
+    items: input.items,
+    yieldAmount: input.yieldAmount,
+    yieldUnit: input.yieldUnit,
+    memo: input.memo?.trim() || undefined,
+    photoUrl: input.photoUrl || undefined,
+    costHistory: [],
+    createdAt: at,
+    updatedAt: at,
+  };
+  const prep: Prep = {
+    ...base,
+    costHistory: [{ cost: computePrepCost(base, toIngredientMap(data.ingredients)), at }],
+  };
+  mutate((prev) => ({ ...prev, preps: [prep, ...(prev.preps ?? [])] }));
+  return prep;
+}
+
+export function updatePrep(id: string, input: PrepInput): AffectedMenu[] {
+  let affected: AffectedMenu[] = [];
+  mutate((data) => {
+    const at = nowIso();
+    const preps = (data.preps ?? []).map((prep) =>
+      prep.id === id
+        ? {
+            ...prep,
+            name: input.name.trim(),
+            description: input.description?.trim() || undefined,
+            items: input.items,
+            yieldAmount: input.yieldAmount,
+            yieldUnit: input.yieldUnit,
+            memo: input.memo?.trim() || undefined,
+            photoUrl: input.photoUrl || undefined,
+            updatedAt: at,
+          }
+        : prep,
+    );
+    const result = recalculate({ ...data, preps });
+    affected = result.affected;
+    return result.data;
+  });
+  return affected;
+}
+
+export function removePrep(id: string): void {
+  mutate((data) => ({
+    ...data,
+    preps: (data.preps ?? []).filter((p) => p.id !== id),
+    menus: data.menus.map((menu) =>
+      menu.items.some((item) => item.prepId === id)
+        ? {
+            ...menu,
+            items: menu.items.map((item) =>
+              item.prepId === id ? { ...item, prepId: null } : item,
+            ),
+          }
+        : menu,
+    ),
+  }));
+}
+
+export function duplicatePrep(id: string): Prep | null {
+  const source = (store.getSnapshot().data.preps ?? []).find((p) => p.id === id);
+  if (!source) return null;
+  const at = nowIso();
+  const copy: Prep = {
+    ...source,
+    id: createId('prep'),
+    name: `${source.name} (복사본)`,
+    items: source.items.map((item) => ({ ...item, id: createId('item') })),
+    costHistory: [{ cost: source.costHistory.at(-1)?.cost ?? 0, at }],
+    createdAt: at,
+    updatedAt: at,
+  };
+  mutate((data) => ({ ...data, preps: [copy, ...(data.preps ?? [])] }));
+  return copy;
+}
+
+// ─────────────────────────────────────────────────────────
+// 매입가 이력
+// ─────────────────────────────────────────────────────────
+
+export function addPurchase(input: PurchaseInput): AffectedMenu[] {
+  let affected: AffectedMenu[] = [];
+  mutate((data) => {
+    const record: PurchaseRecord = {
+      id: createId('buy'),
+      ownerId: store.getSnapshot().ownerId,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      purchasedAt: input.purchasedAt,
+      supplier: input.supplier?.trim() || undefined,
+      quantity: input.quantity,
+      unit: input.unit,
+      amount: input.amount,
+      unitCost: purchaseUnitCost(input),
+      memo: input.memo?.trim() || undefined,
+      createdAt: nowIso(),
+    };
+    const purchases = [...(data.purchases ?? []), record];
+    const next = applyPricingToTargets({ ...data, purchases });
+    const result = recalculate(next);
+    affected = result.affected;
+    return result.data;
+  });
+  return affected;
+}
+
+export function removePurchase(id: string): AffectedMenu[] {
+  let affected: AffectedMenu[] = [];
+  mutate((data) => {
+    const purchases = (data.purchases ?? []).filter((p) => p.id !== id);
+    const result = recalculate(applyPricingToTargets({ ...data, purchases }));
+    affected = result.affected;
+    return result.data;
+  });
+  return affected;
+}
+
+/** 가격 기준(최근/평균)을 바꾸면 적용 가격이 즉시 달라진다. */
+export function setPricingMode(
+  targetType: 'ingredient' | 'supply',
+  targetId: string,
+  mode: PricingMode,
+): AffectedMenu[] {
+  let affected: AffectedMenu[] = [];
+  mutate((data) => {
+    const next: AppData =
+      targetType === 'ingredient'
+        ? {
+            ...data,
+            ingredients: data.ingredients.map((i) =>
+              i.id === targetId ? { ...i, pricingMode: mode } : i,
+            ),
+          }
+        : {
+            ...data,
+            supplies: (data.supplies ?? []).map((s) =>
+              s.id === targetId ? { ...s, pricingMode: mode } : s,
+            ),
+          };
+    const result = recalculate(applyPricingToTargets(next));
+    affected = result.affected;
+    return result.data;
+  });
+  return affected;
+}
+
+/** 매입 이력과 가격 기준에 맞춰 재료·부자재의 현재 적용 가격을 다시 채운다. */
+function applyPricingToTargets(data: AppData): AppData {
+  const purchases = data.purchases ?? [];
+  return {
+    ...data,
+    ingredients: data.ingredients.map((i) => applyPricingMode(i, purchases, 'ingredient')),
+    supplies: (data.supplies ?? []).map((s) => applyPricingMode(s, purchases, 'supply')),
+  };
+}
+
+/** 여러 건을 한 번에 등록한다. (대량 등록) */
+export function addIngredientsBulk(inputs: IngredientInput[]): Ingredient[] {
+  const at = nowIso();
+  const ownerId = store.getSnapshot().ownerId;
+  const created = inputs.map<Ingredient>((input) => ({
+    id: createId('ing'),
+    ownerId,
+    name: input.name.trim(),
+    price: input.price,
+    quantity: input.quantity,
+    unit: input.unit,
+    memo: input.memo?.trim() || undefined,
+    supplier: input.supplier?.trim() || undefined,
+    pricingMode: 'manual',
+    priceHistory: [
+      {
+        price: input.price,
+        quantity: input.quantity,
+        unit: input.unit,
+        unitCost: input.quantity > 0 ? input.price / input.quantity : 0,
+        at,
+      },
+    ],
+    createdAt: at,
+    updatedAt: at,
+  }));
+  if (created.length === 0) return [];
+  mutate((data) => ({ ...data, ingredients: [...created, ...data.ingredients] }));
+  return created;
+}
+
+export function addSuppliesBulk(inputs: SupplyInput[]): Supply[] {
+  const at = nowIso();
+  const ownerId = store.getSnapshot().ownerId;
+  const created = inputs.map<Supply>((input) => ({
+    id: createId('sup'),
+    ownerId,
+    name: input.name.trim(),
+    price: input.price,
+    quantity: input.quantity,
+    unit: input.unit,
+    supplier: input.supplier?.trim() || undefined,
+    memo: input.memo?.trim() || undefined,
+    pricingMode: 'manual',
+    priceHistory: [
+      {
+        price: input.price,
+        quantity: input.quantity,
+        unit: input.unit,
+        unitCost: input.quantity > 0 ? input.price / input.quantity : 0,
+        at,
+      },
+    ],
+    createdAt: at,
+    updatedAt: at,
+  }));
+  if (created.length === 0) return [];
+  mutate((data) => ({ ...data, supplies: [...created, ...(data.supplies ?? [])] }));
+  return created;
+}
+
 export function addCategory(name: string): void {
   const trimmed = name.trim();
   if (!trimmed) return;
@@ -329,12 +763,31 @@ export interface UseDataResult {
   ownerId: string;
   ingredients: Ingredient[];
   menus: Menu[];
+  preps: Prep[];
+  supplies: Supply[];
+  purchases: PurchaseRecord[];
   menuViews: MenuView[];
   ingredientMap: Map<string, Ingredient>;
+  prepMap: Map<string, Prep>;
+  supplyMap: Map<string, Supply>;
+  /** 원가 계산에 필요한 저장 데이터 묶음 */
+  sources: CostSources;
   categories: string[];
   addIngredient: typeof addIngredient;
   updateIngredient: typeof updateIngredient;
   removeIngredient: typeof removeIngredient;
+  addIngredientsBulk: typeof addIngredientsBulk;
+  addSupply: typeof addSupply;
+  updateSupply: typeof updateSupply;
+  removeSupply: typeof removeSupply;
+  addSuppliesBulk: typeof addSuppliesBulk;
+  addPrep: typeof addPrep;
+  updatePrep: typeof updatePrep;
+  removePrep: typeof removePrep;
+  duplicatePrep: typeof duplicatePrep;
+  addPurchase: typeof addPurchase;
+  removePurchase: typeof removePurchase;
+  setPricingMode: typeof setPricingMode;
   addMenu: typeof addMenu;
   updateMenu: typeof updateMenu;
   duplicateMenu: typeof duplicateMenu;
@@ -356,11 +809,20 @@ export function useData(): UseDataResult {
   }, [authReady, ownerId]);
 
   const { ingredients, menus, customCategories } = state.data;
+  const preps = useMemo(() => state.data.preps ?? [], [state.data.preps]);
+  const supplies = useMemo(() => state.data.supplies ?? [], [state.data.supplies]);
+  const purchases = useMemo(() => state.data.purchases ?? [], [state.data.purchases]);
 
   const ingredientMap = useMemo(() => toIngredientMap(ingredients), [ingredients]);
+  const prepMap = useMemo(() => new Map(preps.map((p) => [p.id, p])), [preps]);
+  const supplyMap = useMemo(() => new Map(supplies.map((s) => [s.id, s])), [supplies]);
+  const sources = useMemo<CostSources>(
+    () => ({ ingredients: ingredientMap, preps: prepMap, supplies: supplyMap }),
+    [ingredientMap, prepMap, supplyMap],
+  );
   const menuViews = useMemo(
-    () => menus.map((menu) => buildMenuView(menu, ingredientMap)),
-    [menus, ingredientMap],
+    () => menus.map((menu) => buildMenuView(menu, sources)),
+    [menus, sources],
   );
   const categories = useMemo(() => mergeCategories(customCategories), [customCategories]);
 
@@ -370,12 +832,30 @@ export function useData(): UseDataResult {
       ownerId,
       ingredients,
       menus,
+      preps,
+      supplies,
+      purchases,
       menuViews,
       ingredientMap,
+      prepMap,
+      supplyMap,
+      sources,
       categories,
       addIngredient,
       updateIngredient,
       removeIngredient,
+      addIngredientsBulk,
+      addSupply,
+      updateSupply,
+      removeSupply,
+      addSuppliesBulk,
+      addPrep,
+      updatePrep,
+      removePrep,
+      duplicatePrep,
+      addPurchase,
+      removePurchase,
+      setPricingMode,
       addMenu,
       updateMenu,
       duplicateMenu,
@@ -391,8 +871,14 @@ export function useData(): UseDataResult {
       ownerId,
       ingredients,
       menus,
+      preps,
+      supplies,
+      purchases,
       menuViews,
       ingredientMap,
+      prepMap,
+      supplyMap,
+      sources,
       categories,
     ],
   );

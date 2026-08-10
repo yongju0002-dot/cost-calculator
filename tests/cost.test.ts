@@ -12,6 +12,14 @@ import {
   computeSuggestedPrice,
   costRateLevel,
   computeCostChange,
+  computePrepCost,
+  prepUnitCost,
+  prepSnapshot,
+  computeCostBreakdown,
+  breakdownRatio,
+  syncRecipeItem,
+  resolvePriceByMode,
+  purchasesOf,
 } from '../src/lib/domain/cost.ts';
 import {
   roundTo,
@@ -21,7 +29,13 @@ import {
   parseNumberInput,
   applyThousandSeparator,
 } from '../src/lib/domain/money.ts';
-import type { RecipeItem } from '../src/lib/domain/types.ts';
+import type {
+  Ingredient,
+  Prep,
+  PurchaseRecord,
+  RecipeItem,
+  Supply,
+} from '../src/lib/domain/types.ts';
 
 let failed = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -45,6 +59,8 @@ const row = (over: Partial<RecipeItem>): RecipeItem => ({
   id: 'x',
   kind: 'ingredient',
   ingredientId: null,
+  prepId: null,
+  supplyId: null,
   name: 'x',
   price: 0,
   quantity: 0,
@@ -127,6 +143,119 @@ eq(
   { previous: 2800, current: 3120, diff: 320, rate: 11.4, direction: 'up', at: 'b' },
 );
 eq('기록이 하나뿐', computeCostChange([{ cost: 2800, at: 'a' }]), null);
+
+// ─────────────────────────────────────────────
+// 프렙 · 부자재 · 매입가 이력
+// ─────────────────────────────────────────────
+
+const ing = (id: string, name: string, price: number, quantity: number, unit: Ingredient['unit']): Ingredient => ({
+  id,
+  ownerId: 'test',
+  name,
+  price,
+  quantity,
+  unit,
+  priceHistory: [],
+  createdAt: 'a',
+  updatedAt: 'a',
+});
+
+// 기획 예시: 고추장 2,000원(500g) + 간장 900원(300ml) + 설탕 300원(200g) = 3,200원
+const prepIngredients = new Map<string, Ingredient>([
+  ['gochu', ing('gochu', '고추장', 2000, 500, 'g')],
+  ['ganjang', ing('ganjang', '간장', 900, 300, 'ml')],
+  ['sugar', ing('sugar', '설탕', 300, 200, 'g')],
+]);
+
+const sauce: Prep = {
+  id: 'sauce',
+  ownerId: 'test',
+  name: '제육 양념장',
+  items: [
+    row({ kind: 'ingredient', ingredientId: 'gochu', price: 2000, quantity: 500, unit: 'g', amount: 500, amountUnit: 'g' }),
+    row({ kind: 'ingredient', ingredientId: 'ganjang', price: 900, quantity: 300, unit: 'ml', amount: 300, amountUnit: 'ml' }),
+    row({ kind: 'ingredient', ingredientId: 'sugar', price: 300, quantity: 200, unit: 'g', amount: 200, amountUnit: 'g' }),
+  ],
+  yieldAmount: 2,
+  yieldUnit: 'kg',
+  costHistory: [],
+  createdAt: 'a',
+  updatedAt: 'a',
+};
+
+eq('프렙 총원가', computePrepCost(sauce, prepIngredients), 3200);
+eq('프렙 1g당 원가', prepUnitCost(sauce, prepIngredients)?.value, 1.6);
+eq('프렙 100g당 원가', roundTo((prepUnitCost(sauce, prepIngredients)?.value ?? 0) * 100, 0), 160);
+eq('프렙 스냅샷', prepSnapshot(sauce, prepIngredients), { price: 3200, quantity: 2, unit: 'kg' });
+
+// 메뉴에서 프렙 80g 사용 -> 1.6원/g × 80 = 128원
+const prepRow = row({ kind: 'prep', prepId: 'sauce', amount: 80, amountUnit: 'g' });
+const syncedPrepRow = syncRecipeItem(prepRow, {
+  ingredients: prepIngredients,
+  preps: new Map([['sauce', sauce]]),
+});
+eq('메뉴에서 프렙 80g', computeItemCost(syncedPrepRow), 128);
+
+// 부자재: 도시락 용기 100개 30,000원 -> 개당 300원
+const container: Supply = {
+  id: 'box',
+  ownerId: 'test',
+  name: '도시락 용기',
+  price: 30000,
+  quantity: 100,
+  unit: '개',
+  priceHistory: [],
+  createdAt: 'a',
+  updatedAt: 'a',
+};
+const supplyRow = syncRecipeItem(row({ kind: 'supply', supplyId: 'box', amount: 1, amountUnit: '개' }), {
+  ingredients: new Map(),
+  supplies: new Map([['box', container]]),
+});
+eq('부자재 1개 원가', computeItemCost(supplyRow), 300);
+
+// 원가 구성: 식재료 3,000 + 프렙 500 + 부자재 400 = 3,900
+const comboItems: RecipeItem[] = [
+  row({ kind: 'ingredient', price: 3000, quantity: 1, unit: '개', amount: 1, amountUnit: '개' }),
+  row({ kind: 'prep', price: 500, quantity: 1, unit: '개', amount: 1, amountUnit: '개' }),
+  row({ kind: 'supply', price: 400, quantity: 1, unit: '개', amount: 1, amountUnit: '개' }),
+];
+const breakdown = computeCostBreakdown(comboItems);
+eq('원가 구성 합계', breakdown.total, 3900);
+eq('원가 구성 분해', [breakdown.ingredient, breakdown.prep, breakdown.supply], [3000, 500, 400]);
+eq('원가율(구성 포함)', computeCostRate(breakdown.total, 12000), 32.5);
+eq('예상 이익', computeMarginAmount(breakdown.total, 12000), 8100);
+eq('식재료 비율', breakdownRatio(breakdown, 'ingredient'), 76.9);
+
+// 매입가 이력
+const buy = (id: string, at: string, quantity: number, amount: number): PurchaseRecord => ({
+  id,
+  ownerId: 'test',
+  targetType: 'ingredient',
+  targetId: 'pork',
+  purchasedAt: at,
+  quantity,
+  unit: 'kg',
+  amount,
+  unitCost: amount / (quantity * 1000),
+  createdAt: at,
+});
+const records = [buy('p1', '2026-07-01', 10, 90000), buy('p2', '2026-08-01', 10, 110000)];
+
+eq('최근 매입가', resolvePriceByMode('latest', records), { price: 110000, quantity: 10, unit: 'kg' });
+eq('평균 매입가', resolvePriceByMode('average', records), { price: 200000, quantity: 20000, unit: 'g' });
+eq('평균 매입 단가(원/kg)', roundTo(200000 / 20, 0), 10000);
+eq('직접 입력 기준은 이력 무시', resolvePriceByMode('manual', records), null);
+eq('이력 없으면 null', resolvePriceByMode('latest', []), null);
+eq('대상별 이력 필터(최신순)', purchasesOf(records, 'ingredient', 'pork').map((r) => r.id), ['p2', 'p1']);
+eq('다른 대상은 제외', purchasesOf(records, 'supply', 'pork').length, 0);
+
+// 가격 변동률: 9,000원/kg -> 11,000원/kg = +22.2%
+eq(
+  '매입가 변동률',
+  roundTo(((110000 / 10 - 90000 / 10) / (90000 / 10)) * 100, 1),
+  22.2,
+);
 
 console.log(failed === 0 ? '\n모든 테스트 통과' : `\n실패 ${failed}건`);
 if (failed > 0) process.exit(1);

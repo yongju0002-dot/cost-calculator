@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { buttonClass } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { getSupabase } from '@/lib/supabase/client';
+import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 
 /**
  * 이메일 인증 확인 링크가 도착하는 자리.
@@ -21,38 +21,44 @@ import { getSupabase } from '@/lib/supabase/client';
  */
 export function ConfirmClient() {
   const router = useRouter();
-  const [status, setStatus] = useState<'checking' | 'failed'>('checking');
-  const [reason, setReason] = useState<string | null>(null);
+  // 주소는 렌더 중에 한 번만 읽는다. (서버 렌더 시에는 값이 없다)
+  const [params] = useState<URLSearchParams | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search),
+  );
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  const tokenHash = params?.get('token_hash') ?? null;
+  const type = (params?.get('type') as EmailOtpType | null) ?? null;
+  // 주소에 필요한 값이 없으면 확인을 시도할 것도 없다.
+  const linkInvalid = Boolean(params) && (!tokenHash || !type);
+  const notConfigured = Boolean(params) && !isSupabaseConfigured;
+  const reason =
+    verifyError ??
+    (linkInvalid ? '인증 링크가 올바르지 않습니다. 메일에서 링크를 다시 확인해주세요.' : null) ??
+    (notConfigured ? '로그인 기능이 아직 연결되지 않았습니다.' : null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tokenHash = params.get('token_hash');
-    const type = params.get('type') as EmailOtpType | null;
-    const next = params.get('next');
-    const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
-
+    if (!tokenHash || !type) return;
     const supabase = getSupabase();
-    if (!tokenHash || !type || !supabase) {
-      setReason('인증 링크가 올바르지 않습니다. 메일에서 링크를 다시 확인해주세요.');
-      setStatus('failed');
-      return;
-    }
+    if (!supabase) return;
+
+    const next = params?.get('next');
+    const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
 
     supabase.auth.verifyOtp({ token_hash: tokenHash, type }).then(({ error }) => {
       if (error) {
-        setReason(
+        setVerifyError(
           error.message.toLowerCase().includes('expired')
             ? '인증 링크가 만료되었습니다. 다시 가입을 시도해주세요.'
             : '인증 링크가 이미 사용되었거나 올바르지 않습니다.',
         );
-        setStatus('failed');
         return;
       }
       router.replace(target);
     });
-  }, [router]);
+  }, [router, params, tokenHash, type]);
 
-  if (status === 'failed') {
+  if (reason) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 sm:px-6">
         <Card className="text-center">

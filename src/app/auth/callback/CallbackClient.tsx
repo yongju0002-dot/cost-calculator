@@ -16,36 +16,30 @@ import { useAuth } from '@/lib/auth/auth';
 export function CallbackClient() {
   const router = useRouter();
   const { user, ready } = useAuth();
-  const [failed, setFailed] = useState(false);
-  const [reason, setReason] = useState<string | null>(null);
+  // 주소는 렌더 중에 한 번만 읽는다. (서버 렌더 시에는 값이 없다)
+  const [params] = useState<URLSearchParams | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search),
+  );
+  const [timedOut, setTimedOut] = useState(false);
+
+  // 구글에서 거절/취소된 경우 주소에 오류가 담겨 온다.
+  const oauthError = params?.get('error_description') ?? params?.get('error') ?? null;
+  const failed = Boolean(oauthError) || timedOut;
 
   useEffect(() => {
-    // 구글에서 거절/취소된 경우 주소에 오류가 담겨 온다.
-    const params = new URLSearchParams(window.location.search);
-    const error = params.get('error_description') ?? params.get('error');
-    if (error) {
-      setReason(
-        error.includes('access_denied')
-          ? '구글 로그인이 취소되었습니다.'
-          : '로그인 처리 중 문제가 발생했습니다.',
-      );
-      setFailed(true);
-      return;
-    }
-
-    if (!ready) return;
+    if (oauthError || !ready) return;
 
     if (user) {
-      const next = params.get('next');
+      const next = params?.get('next');
       const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
       router.replace(target);
       return;
     }
 
     // 세션이 잡히기까지 잠깐 걸릴 수 있으니 조금 기다린 뒤에 실패로 처리한다.
-    const timer = window.setTimeout(() => setFailed(true), 4000);
+    const timer = window.setTimeout(() => setTimedOut(true), 4000);
     return () => window.clearTimeout(timer);
-  }, [ready, user, router]);
+  }, [ready, user, router, params, oauthError]);
 
   return (
     <div className="mx-auto max-w-md px-4 py-20 sm:px-6">
@@ -57,7 +51,11 @@ export function CallbackClient() {
             </span>
             <h1 className="text-lg font-extrabold text-ink-900">로그인을 완료하지 못했습니다</h1>
             <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
-              {reason ?? '로그인 정보가 확인되지 않았습니다. 다시 시도해주세요.'}
+              {oauthError
+                ? oauthError.includes('access_denied')
+                  ? '구글 로그인이 취소되었습니다.'
+                  : '로그인 처리 중 문제가 발생했습니다.'
+                : '로그인 정보가 확인되지 않았습니다. 다시 시도해주세요.'}
             </p>
             <div className="mt-6 flex flex-col gap-2">
               <Link href="/login" className={buttonClass('primary', 'md')}>

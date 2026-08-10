@@ -1,6 +1,14 @@
 import { roundTo, roundWon, ceilTo } from './money';
 import { baseUnitOf, isConvertible, toBaseAmount, type Unit } from './units';
-import type { Ingredient, Menu, RecipeItem } from './types';
+import type {
+  Ingredient,
+  Menu,
+  Prep,
+  PricingMode,
+  PurchaseRecord,
+  RecipeItem,
+  Supply,
+} from './types';
 
 /**
  * 원가 계산 로직 (UI 와 완전히 분리되어 있다).
@@ -81,15 +89,187 @@ export function syncItemWithIngredient(
   };
 }
 
-export function syncMenuItems(
-  menu: Menu,
-  ingredients: Map<string, Ingredient>,
-): RecipeItem[] {
-  return menu.items.map((item) => syncItemWithIngredient(item, ingredients));
+// ─────────────────────────────────────────────────────────
+// 프렙 (미리 만들어두는 양념장·육수 등)
+// ─────────────────────────────────────────────────────────
+
+/** 프렙 안의 재료들을 최신 가격으로 맞춘다. */
+export function syncPrepItems(prep: Prep, ingredients: Map<string, Ingredient>): RecipeItem[] {
+  return (prep.items ?? []).map((item) => syncItemWithIngredient(item, ingredients));
 }
 
-export function computeMenuCost(menu: Menu, ingredients: Map<string, Ingredient>): number {
-  return computeRecipeCost(syncMenuItems(menu, ingredients));
+/** 프렙 한 통을 만드는 데 드는 총 재료 원가 */
+export function computePrepCost(prep: Prep, ingredients: Map<string, Ingredient>): number {
+  return computeRecipeCost(syncPrepItems(prep, ingredients));
+}
+
+/**
+ * 프렙의 단위 원가.
+ * 예) 총원가 3,200원 / 생산량 2kg -> 1.6원/g (= 100g당 160원)
+ */
+export function prepUnitCost(prep: Prep, ingredients: Map<string, Ingredient>): UnitCost | null {
+  return computeUnitCost(computePrepCost(prep, ingredients), prep.yieldAmount, prep.yieldUnit);
+}
+
+/**
+ * 메뉴에서 프렙을 쓸 때 필요한 기준 값.
+ * 재료와 동일하게 price ÷ quantity 로 단위 원가가 나오도록 맞춰준다.
+ */
+export function prepSnapshot(
+  prep: Prep,
+  ingredients: Map<string, Ingredient>,
+): { price: number; quantity: number; unit: Unit } {
+  return {
+    price: computePrepCost(prep, ingredients),
+    quantity: prep.yieldAmount,
+    unit: prep.yieldUnit,
+  };
+}
+
+// ─────────────────────────────────────────────────────────
+// 메뉴 (재료 + 프렙 + 부자재 + 기타)
+// ─────────────────────────────────────────────────────────
+
+/** 원가 계산에 필요한 저장 데이터 묶음 */
+export interface CostSources {
+  ingredients: Map<string, Ingredient>;
+  preps?: Map<string, Prep>;
+  supplies?: Map<string, Supply>;
+}
+
+/** 재료·프렙·부자재의 최신 가격을 레시피 한 줄에 반영한다. */
+export function syncRecipeItem(item: RecipeItem, sources: CostSources): RecipeItem {
+  if (item.kind === 'ingredient') {
+    return syncItemWithIngredient(item, sources.ingredients);
+  }
+  if (item.kind === 'prep') {
+    const prep = item.prepId ? sources.preps?.get(item.prepId) : undefined;
+    if (!prep) return item;
+    return { ...item, name: prep.name, ...prepSnapshot(prep, sources.ingredients) };
+  }
+  if (item.kind === 'supply') {
+    const supply = item.supplyId ? sources.supplies?.get(item.supplyId) : undefined;
+    if (!supply) return item;
+    return {
+      ...item,
+      name: supply.name,
+      price: supply.price,
+      quantity: supply.quantity,
+      unit: supply.unit,
+    };
+  }
+  return item;
+}
+
+export function syncMenuItems(menu: Menu, sources: CostSources): RecipeItem[] {
+  return menu.items.map((item) => syncRecipeItem(item, sources));
+}
+
+export function computeMenuCost(menu: Menu, sources: CostSources): number {
+  return computeRecipeCost(syncMenuItems(menu, sources));
+}
+
+/** 원가를 구성 요소별로 나눈 값 */
+export interface CostBreakdown {
+  ingredient: number;
+  prep: number;
+  supply: number;
+  manual: number;
+  total: number;
+}
+
+export function computeCostBreakdown(items: RecipeItem[]): CostBreakdown {
+  const breakdown: CostBreakdown = { ingredient: 0, prep: 0, supply: 0, manual: 0, total: 0 };
+  for (const item of items) {
+    const cost = computeItemCost(item);
+    breakdown[item.kind] += cost;
+    breakdown.total += cost;
+  }
+  return breakdown;
+}
+
+/** 구성 요소별 비율(%) — 원가 구성 그래프에 쓴다. */
+export function breakdownRatio(breakdown: CostBreakdown, key: keyof CostBreakdown): number {
+  if (breakdown.total <= 0) return 0;
+  return roundTo((breakdown[key] / breakdown.total) * 100, 1);
+}
+
+// ─────────────────────────────────────────────────────────
+// 매입가 이력
+// ─────────────────────────────────────────────────────────
+
+/** 특정 재료·부자재의 매입 기록만 골라 최신순으로 정렬한다. */
+export function purchasesOf(
+  purchases: PurchaseRecord[],
+  targetType: 'ingredient' | 'supply',
+  targetId: string,
+): PurchaseRecord[] {
+  return purchases
+    .filter((p) => p.targetType === targetType && p.targetId === targetId)
+    .sort((a, b) => (a.purchasedAt < b.purchasedAt ? 1 : a.purchasedAt > b.purchasedAt ? -1 : 0));
+}
+
+/** 매입 기록 하나의 기준 단위당 가격 */
+export function purchaseUnitCost(record: {
+  amount: number;
+  quantity: number;
+  unit: Unit;
+}): number {
+  const unitCost = computeUnitCost(record.amount, record.quantity, record.unit);
+  return unitCost ? unitCost.value : 0;
+}
+
+/**
+ * 가격 기준에 따라 실제로 적용할 구매가격/구매수량을 정한다.
+ * 반환값이 null 이면 기존에 입력된 가격을 그대로 쓴다.
+ */
+export function resolvePriceByMode(
+  mode: PricingMode | undefined,
+  records: PurchaseRecord[],
+): { price: number; quantity: number; unit: Unit } | null {
+  if (!mode || mode === 'manual') return null;
+  const sorted = [...records].sort((a, b) =>
+    a.purchasedAt < b.purchasedAt ? -1 : a.purchasedAt > b.purchasedAt ? 1 : 0,
+  );
+  if (sorted.length === 0) return null;
+
+  if (mode === 'latest') {
+    const latest = sorted[sorted.length - 1];
+    return { price: latest.amount, quantity: latest.quantity, unit: latest.unit };
+  }
+
+  // 평균: 단위가 섞여 있어도 되도록 기준 단위로 환산해 총액 ÷ 총수량으로 구한다.
+  const baseUnit = baseUnitOf(sorted[sorted.length - 1].unit);
+  let totalAmount = 0;
+  let totalBaseQuantity = 0;
+  for (const record of sorted) {
+    if (baseUnitOf(record.unit) !== baseUnit) continue;
+    totalAmount += record.amount;
+    totalBaseQuantity += toBaseAmount(record.quantity, record.unit);
+  }
+  if (totalBaseQuantity <= 0) return null;
+  return { price: roundTo(totalAmount, 2), quantity: totalBaseQuantity, unit: baseUnit };
+}
+
+/** 매입 이력 기준으로 재료·부자재의 현재 적용 가격을 갱신한다. */
+export function applyPricingMode<T extends Ingredient | Supply>(
+  target: T,
+  purchases: PurchaseRecord[],
+  targetType: 'ingredient' | 'supply',
+): T {
+  const resolved = resolvePriceByMode(
+    target.pricingMode,
+    purchasesOf(purchases, targetType, target.id),
+  );
+  if (!resolved) return target;
+  if (
+    target.price === resolved.price &&
+    target.quantity === resolved.quantity &&
+    target.unit === resolved.unit
+  ) {
+    return target;
+  }
+  return { ...target, ...resolved };
 }
 
 /** 원가율(%) = 재료 원가 ÷ 판매가격 × 100 */
