@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 로컬 개발 편의 스크립트 (개인 경로가 들어 있어 공유하지 않는다)
+dev-with-node.cmd

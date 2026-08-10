@@ -10,8 +10,10 @@ import { Logo } from './Logo';
 
 export const NAV_LINKS = [
   { href: '/calculator', label: '원가 계산' },
-  { href: '/ingredients', label: '내 재료' },
-  { href: '/menus', label: '내 메뉴' },
+  { href: '/ingredients', label: '재료' },
+  { href: '/preps', label: '프렙' },
+  { href: '/supplies', label: '부자재' },
+  { href: '/menus', label: '메뉴' },
 ];
 
 export function SiteHeader() {

@@ -13,8 +13,10 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/lib/auth/auth';
 import { useData } from '@/lib/store/data';
 import {
+  computeCostBreakdown,
   computeCostRate,
   computeMarginAmount,
+  computePrepCost,
   computeRecipeCost,
   computeSuggestedPrice,
   costRateLevel,
@@ -29,6 +31,8 @@ import {
   hasUsableRow,
   isRowEmpty,
   rowFromIngredient,
+  rowFromPrep,
+  rowFromSupply,
   toRecipeItems,
   validateRow,
   type Draft,
@@ -36,6 +40,7 @@ import {
 } from './draft';
 import { RecipeRow } from './RecipeRow';
 import { IngredientPicker } from './IngredientPicker';
+import { PrepPicker, SupplyPicker } from './PrepSupplyPicker';
 
 /**
  * menuId 가 있으면 저장된 메뉴를 수정하는 화면이 된다. (/calculator/[menuId])
@@ -48,12 +53,26 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
   const router = useRouter();
   const menuIdParam = menuId ?? null;
   const { user } = useAuth();
-  const { ready, ingredients, menus, menuViews, categories, addMenu, updateMenu, addCategory } = useData();
+  const {
+    ready,
+    ingredients,
+    ingredientMap,
+    preps,
+    supplies,
+    menus,
+    menuViews,
+    categories,
+    addMenu,
+    updateMenu,
+    addCategory,
+  } = useData();
   const { showToast } = useToast();
 
   const draft = useDraft();
   const [showErrors, setShowErrors] = useState(false);
   const [pickerRowId, setPickerRowId] = useState<string | null>(null);
+  const [prepPickerOpen, setPrepPickerOpen] = useState(false);
+  const [supplyPickerOpen, setSupplyPickerOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [newCategory, setNewCategory] = useState('');
   const [categoryOpen, setCategoryOpen] = useState(false);
@@ -80,6 +99,7 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
 
   const items = useMemo(() => toRecipeItems(draft.items), [draft.items]);
   const cost = useMemo(() => computeRecipeCost(items), [items]);
+  const breakdown = useMemo(() => computeCostBreakdown(items), [items]);
   const sellingPrice = parseNumberInput(draft.sellingPrice) ?? 0;
   const costRate = computeCostRate(cost, sellingPrice);
   const level = costRateLevel(costRate);
@@ -278,6 +298,18 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
                 <IconPlus width={18} height={18} />
                 재료 추가
               </Button>
+              {user ? (
+                <>
+                  <Button variant="secondary" onClick={() => setPrepPickerOpen(true)}>
+                    <IconPlus width={18} height={18} />
+                    프렙 추가
+                  </Button>
+                  <Button variant="secondary" onClick={() => setSupplyPickerOpen(true)}>
+                    <IconPlus width={18} height={18} />
+                    부자재 추가
+                  </Button>
+                </>
+              ) : null}
               <Button
                 variant="secondary"
                 onClick={() => setDraft((prev) => ({ ...prev, items: [...prev.items, createManualRow()] }))}
@@ -287,8 +319,33 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
               </Button>
             </div>
 
+            {/* 원가가 여러 종류로 구성된 경우에만 구성을 보여준다. */}
+            {[breakdown.ingredient, breakdown.prep, breakdown.supply, breakdown.manual].filter(
+              (value) => value > 0,
+            ).length > 1 ? (
+              <dl className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(
+                  [
+                    ['식재료', breakdown.ingredient],
+                    ['프렙', breakdown.prep],
+                    ['부자재', breakdown.supply],
+                    ['기타', breakdown.manual],
+                  ] as const
+                )
+                  .filter(([, value]) => value > 0)
+                  .map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-ink-50 px-3 py-2.5">
+                      <dt className="text-xs font-semibold text-ink-500">{label}</dt>
+                      <dd className="tnum mt-0.5 text-[15px] font-bold text-ink-900">
+                        {formatWon(value)}
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
+            ) : null}
+
             <div className="mt-5 flex items-center justify-between rounded-xl bg-ink-900 px-5 py-4 text-white">
-              <span className="text-[15px] font-semibold">총 재료 원가</span>
+              <span className="text-[15px] font-semibold">총 원가</span>
               <span className="tnum text-2xl font-extrabold">{formatWon(cost)}</span>
             </div>
           </Card>
@@ -436,6 +493,28 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
         ingredients={ingredients}
         onClose={() => setPickerRowId(null)}
         onSelect={handlePick}
+      />
+
+      <PrepPicker
+        open={prepPickerOpen}
+        preps={preps}
+        ingredientMap={ingredientMap}
+        onClose={() => setPrepPickerOpen(false)}
+        onSelect={(prep) =>
+          setDraft((prev) => ({
+            ...prev,
+            items: [...prev.items, rowFromPrep(prep, computePrepCost(prep, ingredientMap))],
+          }))
+        }
+      />
+
+      <SupplyPicker
+        open={supplyPickerOpen}
+        supplies={supplies}
+        onClose={() => setSupplyPickerOpen(false)}
+        onSelect={(supply) =>
+          setDraft((prev) => ({ ...prev, items: [...prev.items, rowFromSupply(supply)] }))
+        }
       />
 
       <ConfirmDialog
