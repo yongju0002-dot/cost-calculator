@@ -12,7 +12,25 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
  * 덕분에 코드를 먼저 배포해 두고 환경변수를 넣는 순간 서버 로그인이 켜진다.
  */
 
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
+/**
+ * Supabase 프로젝트 URL 정리.
+ *
+ * Supabase 대시보드의 "Data API" 화면은 REST 엔드포인트(.../rest/v1/)를 크게 보여주는데,
+ * 이 값을 그대로 복사해 넣으면 supabase-js 가 인증 요청 경로를
+ * ".../rest/v1/auth/v1/signup" 처럼 잘못 조합해 "Invalid path" 오류가 난다.
+ * 실제로 필요한 값은 경로 없는 프로젝트 origin 뿐이므로, 실수로 붙은 경로/슬래시를 제거한다.
+ */
+function resolveSupabaseUrl(): string {
+  const raw = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return '';
+  }
+}
+
+const SUPABASE_URL = resolveSupabaseUrl();
 const SUPABASE_ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim();
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
