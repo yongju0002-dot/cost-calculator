@@ -36,7 +36,15 @@ export function SiteFooter() {
           기본 원가 계산 기능은 무료입니다. 입력하신 재료·메뉴 정보는 사용 중인 브라우저에 저장되며,
           원가율 기준은 참고용으로 실제 업종과 매장 상황에 따라 다를 수 있습니다.
         </p>
-        <p className="mt-2 text-xs text-ink-400">© {new Date().getFullYear()} WongaGo</p>
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-400">
+          <span>© {new Date().getFullYear()} WongaGo</span>
+          <Link href="/terms" className="hover:text-ink-600 hover:underline">
+            이용약관
+          </Link>
+          <Link href="/privacy" className="font-semibold hover:text-ink-600 hover:underline">
+            개인정보처리방침
+          </Link>
+        </div>
       </div>
     </footer>
   );

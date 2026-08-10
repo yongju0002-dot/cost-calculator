@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { TextField } from '@/components/ui/Field';
+import { Checkbox, PasswordField, TextField } from '@/components/ui/Field';
+import { IconCheck } from '@/components/ui/Icons';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/lib/auth/auth';
+
+const MIN_PASSWORD_LENGTH = 6;
 
 type Mode = 'signin' | 'signup';
 
@@ -19,11 +22,22 @@ export function LoginClient() {
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [name, setName] = useState('');
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreePrivacy, setAgreePrivacy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [touchedConfirm, setTouchedConfirm] = useState(false);
   const [pending, setPending] = useState(false);
   /** 가입 확인 메일을 보낸 경우, 안내 화면으로 전환한다. */
   const [confirmSentTo, setConfirmSentTo] = useState<string | null>(null);
+
+  const passwordLongEnough = password.length >= MIN_PASSWORD_LENGTH;
+  const passwordsMatch = password.length > 0 && password === passwordConfirm;
+  const confirmError =
+    mode === 'signup' && touchedConfirm && passwordConfirm.length > 0 && !passwordsMatch
+      ? '비밀번호가 일치하지 않습니다.'
+      : null;
 
   /**
    * 로그인 후 돌아갈 주소. 렌더 중이 아니라 실제로 이동할 때 읽는다.
@@ -38,6 +52,19 @@ export function LoginClient() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+
+    if (mode === 'signup') {
+      if (!passwordsMatch) {
+        setTouchedConfirm(true);
+        setError('비밀번호가 일치하지 않습니다.');
+        return;
+      }
+      if (!agreeTerms || !agreePrivacy) {
+        setError('이용약관과 개인정보 수집·이용에 모두 동의해주세요.');
+        return;
+      }
+    }
+
     setPending(true);
     try {
       if (mode === 'signup') {
@@ -188,15 +215,83 @@ export function LoginClient() {
             autoComplete="email"
             required
           />
-          <TextField
+          <PasswordField
             label="비밀번호"
-            type="password"
             placeholder="6자 이상"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             required
           />
+          {mode === 'signup' && password.length > 0 ? (
+            <p
+              className={`-mt-1.5 flex items-center gap-1 pl-1 text-xs font-semibold ${
+                passwordLongEnough ? 'text-emerald-600' : 'text-ink-400'
+              }`}
+            >
+              <IconCheck
+                width={13}
+                height={13}
+                strokeWidth={3}
+                className={passwordLongEnough ? 'opacity-100' : 'opacity-30'}
+              />
+              6자 이상 입력해주세요
+            </p>
+          ) : null}
+
+          {mode === 'signup' ? (
+            <PasswordField
+              label="비밀번호 확인"
+              placeholder="비밀번호를 한 번 더 입력해주세요"
+              value={passwordConfirm}
+              onChange={(e) => setPasswordConfirm(e.target.value)}
+              onBlur={() => setTouchedConfirm(true)}
+              autoComplete="new-password"
+              error={confirmError}
+              required
+            />
+          ) : null}
+
+          {mode === 'signup' ? (
+            <div className="mt-1 flex flex-col gap-2 rounded-xl bg-ink-50 p-4">
+              <Checkbox
+                checked={agreeTerms}
+                onChange={(e) => setAgreeTerms(e.target.checked)}
+                label={
+                  <>
+                    (필수){' '}
+                    <Link
+                      href="/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-brand-600 underline"
+                    >
+                      이용약관
+                    </Link>
+                    에 동의합니다
+                  </>
+                }
+              />
+              <Checkbox
+                checked={agreePrivacy}
+                onChange={(e) => setAgreePrivacy(e.target.checked)}
+                label={
+                  <>
+                    (필수){' '}
+                    <Link
+                      href="/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-brand-600 underline"
+                    >
+                      개인정보 수집 및 이용
+                    </Link>
+                    에 동의합니다
+                  </>
+                }
+              />
+            </div>
+          ) : null}
 
           {error ? (
             <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>

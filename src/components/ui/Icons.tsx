@@ -140,3 +140,18 @@ export const IconInfo = (p: IconProps) => (
     <path d="M12 11v5.5M12 7.8v.01" />
   </Base>
 );
+
+export const IconEye = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M2.5 12S5.7 5.5 12 5.5 21.5 12 21.5 12 18.3 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Base>
+);
+
+export const IconEyeOff = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3.5 3.5l17 17" />
+    <path d="M10.6 5.66A10.6 10.6 0 0 1 12 5.5c6.3 0 9.5 6.5 9.5 6.5a15.6 15.6 0 0 1-3.14 4.06M6.6 6.62A15.4 15.4 0 0 0 2.5 12S5.7 18.5 12 18.5c1.13 0 2.16-.2 3.09-.55" />
+    <path d="M9.9 9.9a3 3 0 0 0 4.24 4.24" />
+  </Base>
+);

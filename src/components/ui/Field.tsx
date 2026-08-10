@@ -1,7 +1,8 @@
 'use client';
 
-import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
+import { useId, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { applyThousandSeparator } from '@/lib/domain/money';
+import { IconCheck, IconEye, IconEyeOff } from './Icons';
 
 const BASE_INPUT =
   'w-full rounded-xl border bg-white px-3.5 text-[15px] text-ink-900 placeholder:text-ink-400 outline-none transition-colors focus:border-brand-400 focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50 disabled:text-ink-400';
@@ -73,6 +74,49 @@ export function TextField({
             {suffix}
           </span>
         ) : null}
+      </div>
+    </Field>
+  );
+}
+
+interface PasswordFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'size'> {
+  label?: ReactNode;
+  hint?: ReactNode;
+  error?: string | null;
+  fieldClassName?: string;
+}
+
+/** 비밀번호 입력 필드. 눈 아이콘으로 입력값을 확인할 수 있다. */
+export function PasswordField({
+  label,
+  hint,
+  error,
+  className = '',
+  fieldClassName = '',
+  id,
+  ...props
+}: PasswordFieldProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  const [visible, setVisible] = useState(false);
+  return (
+    <Field label={label} hint={hint} error={error} htmlFor={inputId} className={fieldClassName}>
+      <div className="relative">
+        <input
+          id={inputId}
+          type={visible ? 'text' : 'password'}
+          className={`${BASE_INPUT} h-11 pr-11 ${error ? 'border-red-300' : 'border-ink-200'} ${className}`}
+          {...props}
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? '비밀번호 숨기기' : '비밀번호 표시'}
+          tabIndex={-1}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-600"
+        >
+          {visible ? <IconEyeOff width={18} height={18} /> : <IconEye width={18} height={18} />}
+        </button>
       </div>
     </Field>
   );
@@ -173,5 +217,39 @@ export function SelectField({
         {children}
       </select>
     </Field>
+  );
+}
+
+interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'size'> {
+  label: ReactNode;
+  error?: string | null;
+}
+
+/** 약관 동의 등에 쓰는 체크박스. 기본 체크박스 대신 브랜드 색으로 통일한다. */
+export function Checkbox({ label, error, className = '', id, checked, ...props }: CheckboxProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  return (
+    <div className={className}>
+      <label htmlFor={inputId} className="flex cursor-pointer items-start gap-2.5">
+        <span className="relative mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+          <input
+            id={inputId}
+            type="checkbox"
+            checked={checked}
+            className="peer absolute inset-0 h-5 w-5 cursor-pointer appearance-none rounded-md border border-ink-300 bg-white transition-colors checked:border-brand-500 checked:bg-brand-500"
+            {...props}
+          />
+          <IconCheck
+            width={13}
+            height={13}
+            strokeWidth={3}
+            className="pointer-events-none text-white opacity-0 peer-checked:opacity-100"
+          />
+        </span>
+        <span className="text-sm leading-relaxed text-ink-600">{label}</span>
+      </label>
+      {error ? <p className="mt-1 pl-7 text-sm font-medium text-red-600">{error}</p> : null}
+    </div>
   );
 }
