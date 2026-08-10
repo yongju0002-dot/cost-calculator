@@ -13,10 +13,15 @@ FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# 빌드 시점에 metadata/sitemap/robots 에 들어갈 도메인이 필요하다.
-# 값을 넘기지 않으면 빈 문자열이 되는데, 그 경우는 src/lib/seo.tsx 에서 기본값으로 처리한다.
+# NEXT_PUBLIC_* 값은 빌드 시점에 클라이언트 코드로 인라인된다.
+# 여기에 ARG 로 선언한 것만 배포 플랫폼에서 전달받으므로, 새 공개 환경변수를 추가할 때는
+# 반드시 이 목록에도 함께 추가해야 한다.
 ARG NEXT_PUBLIC_SITE_URL=""
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_SUPABASE_URL=""
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
