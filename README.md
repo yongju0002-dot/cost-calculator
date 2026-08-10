@@ -96,6 +96,7 @@ tests/cost.test.ts         계산 로직 테스트
 
 **Supabase 쪽 설정 (한 번만)**
 
+0. `supabase/002_app_data.sql` 을 SQL Editor 에서 실행 (서버 저장용 표)
 1. `supabase/schema.sql` 을 SQL Editor 에서 실행 (테이블 + RLS)
 2. Authentication → Providers → Google 활성화 후 Google Cloud 에서 발급한 클라이언트 ID/시크릿 입력
 3. Authentication → URL Configuration

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { SyncStatus } from './SyncStatus';
 
 /**
  * 재료 · 프렙 · 부자재를 오가는 서브 네비게이션.
@@ -18,21 +19,24 @@ const LINKS = [
 export function StockNav() {
   const pathname = usePathname();
   return (
-    <nav className="mb-5 flex gap-1 rounded-xl bg-ink-100 p-1">
-      {LINKS.map((link) => {
-        const active = pathname === link.href;
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`flex-1 rounded-lg py-2 text-center text-sm font-bold transition-colors ${
-              active ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
-            }`}
-          >
-            {link.label}
-          </Link>
-        );
-      })}
-    </nav>
+    <>
+      <SyncStatus />
+      <nav className="mb-5 flex gap-1 rounded-xl bg-ink-100 p-1">
+        {LINKS.map((link) => {
+          const active = pathname === link.href;
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={`flex-1 rounded-lg py-2 text-center text-sm font-bold transition-colors ${
+                active ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
+              }`}
+            >
+              {link.label}
+            </Link>
+          );
+        })}
+      </nav>
+    </>
   );
 }

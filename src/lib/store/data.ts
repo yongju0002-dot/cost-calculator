@@ -24,7 +24,9 @@ import type {
 } from '@/lib/domain/types';
 import { isUnit, type Unit } from '@/lib/domain/units';
 import { createId, isBrowser, nowIso, readJson, storageKeys, writeJson } from '@/lib/storage/local';
+import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { ExternalStore } from './externalStore';
+import { fetchRemoteData, isEmptyData, pushRemoteData } from './remote';
 
 /**
  * 재료·메뉴 데이터 저장소.
@@ -101,14 +103,25 @@ export interface AffectedMenu {
   currentCost: number;
 }
 
+/** 서버 저장 상태 */
+export type SyncStatus = 'off' | 'loading' | 'saving' | 'synced' | 'error';
+
 interface DataState {
   ownerId: string;
   data: AppData;
   /** 브라우저 저장소에서 데이터를 읽어왔는지 여부 */
   ready: boolean;
+  sync: SyncStatus;
+  syncError: string | null;
 }
 
-const SERVER_STATE: DataState = { ownerId: GUEST_OWNER, data: EMPTY_DATA, ready: false };
+const SERVER_STATE: DataState = {
+  ownerId: GUEST_OWNER,
+  data: EMPTY_DATA,
+  ready: false,
+  sync: 'off',
+  syncError: null,
+};
 
 function normalizeData(raw: unknown): AppData {
   const data = (raw ?? {}) as Partial<AppData>;
@@ -152,32 +165,149 @@ function readData(ownerId: string): AppData {
 
 const store = new ExternalStore<DataState>(
   () => SERVER_STATE,
-  () => ({ ownerId: GUEST_OWNER, data: readData(GUEST_OWNER), ready: true }),
+  () => ({
+    ownerId: GUEST_OWNER,
+    data: readData(GUEST_OWNER),
+    ready: true,
+    sync: 'off',
+    syncError: null,
+  }),
 );
 
 // 다른 탭에서 데이터를 바꿨다면 현재 탭에도 반영한다.
 if (isBrowser()) {
   window.addEventListener('storage', (event) => {
-    const { ownerId } = store.getSnapshot();
-    if (event.key === storageKeys.data(ownerId)) {
-      store.replace({ ownerId, data: readData(ownerId), ready: true });
+    const current = store.getSnapshot();
+    if (event.key === storageKeys.data(current.ownerId)) {
+      store.replace({ ...current, data: readData(current.ownerId), ready: true });
     }
   });
+}
+
+function setSync(sync: SyncStatus, syncError: string | null = null): void {
+  const current = store.getSnapshot();
+  if (current.sync === sync && current.syncError === syncError) return;
+  store.replace({ ...current, sync, syncError });
+}
+
+// ─────────────────────────────────────────────────────────
+// 서버 저장 (로그인 + Supabase 설정이 되어 있을 때만 동작)
+// ─────────────────────────────────────────────────────────
+
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+/** 아직 서버에 올리지 못한 내용이 있는지 */
+let pendingOwner: string | null = null;
+
+/**
+ * 저장할 때마다 서버에 바로 보내면 요청이 너무 잦아지므로 잠깐 모았다가 보낸다.
+ * 창을 닫을 때는 남은 내용을 즉시 보낸다.
+ */
+function schedulePush(ownerId: string): void {
+  if (!isSupabaseConfigured || ownerId === GUEST_OWNER) return;
+  pendingOwner = ownerId;
+  if (pushTimer) clearTimeout(pushTimer);
+  setSync('saving');
+  pushTimer = setTimeout(() => void flushPush(), 900);
+}
+
+async function flushPush(): Promise<void> {
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  const ownerId = pendingOwner;
+  if (!ownerId) return;
+  pendingOwner = null;
+
+  const current = store.getSnapshot();
+  // 그 사이 로그아웃했거나 계정이 바뀌었다면 보내지 않는다.
+  if (current.ownerId !== ownerId) return;
+
+  try {
+    await pushRemoteData(ownerId, current.data);
+    setSync('synced');
+  } catch (error) {
+    pendingOwner = ownerId;
+    setSync('error', error instanceof Error ? error.message : '서버 저장에 실패했습니다.');
+  }
+}
+
+if (isBrowser()) {
+  // 창을 닫거나 탭을 벗어날 때 남은 내용을 저장한다.
+  window.addEventListener('pagehide', () => void flushPush());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void flushPush();
+  });
+}
+
+/**
+ * 로그인 직후 서버 내용을 가져온다.
+ *  - 서버에 내용이 있으면 그것을 쓴다. (다른 기기에서 쓰던 내용)
+ *  - 서버가 비어 있고 이 기기에만 내용이 있으면 그대로 서버로 올린다.
+ */
+async function syncWithServer(ownerId: string): Promise<void> {
+  if (!isSupabaseConfigured || ownerId === GUEST_OWNER) {
+    setSync('off');
+    return;
+  }
+  setSync('loading');
+  try {
+    const remote = await fetchRemoteData(ownerId);
+    const current = store.getSnapshot();
+    if (current.ownerId !== ownerId) return;
+
+    if (remote && !isEmptyData(normalizeData(remote.data))) {
+      const merged = normalizeData(remote.data);
+      writeJson(storageKeys.data(ownerId), merged);
+      store.replace({ ...current, data: merged, ready: true, sync: 'synced', syncError: null });
+      return;
+    }
+
+    // 서버가 비어 있는 첫 로그인 — 이 기기 내용을 올려둔다.
+    if (!isEmptyData(current.data)) {
+      await pushRemoteData(ownerId, current.data);
+    }
+    setSync('synced');
+  } catch (error) {
+    setSync('error', error instanceof Error ? error.message : '서버에서 데이터를 가져오지 못했습니다.');
+  }
 }
 
 /** 로그인 상태가 바뀌면 해당 계정의 데이터로 교체한다. */
 function setOwner(ownerId: string): void {
   const current = store.getSnapshot();
   if (current.ready && current.ownerId === ownerId) return;
-  store.replace({ ownerId, data: readData(ownerId), ready: true });
+  // 계정이 바뀌면 이전 계정으로 보내려던 저장은 취소한다.
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  pendingOwner = null;
+  store.replace({
+    ownerId,
+    data: readData(ownerId),
+    ready: true,
+    sync: isSupabaseConfigured && ownerId !== GUEST_OWNER ? 'loading' : 'off',
+    syncError: null,
+  });
+  void syncWithServer(ownerId);
 }
 
 function mutate(updater: (data: AppData) => AppData): void {
-  const { ownerId, data } = store.getSnapshot();
-  const next = updater(data);
-  if (next === data) return;
-  writeJson(storageKeys.data(ownerId), next);
-  store.replace({ ownerId, data: next, ready: true });
+  const current = store.getSnapshot();
+  const next = updater(current.data);
+  if (next === current.data) return;
+  writeJson(storageKeys.data(current.ownerId), next);
+  store.replace({ ...current, data: next, ready: true });
+  schedulePush(current.ownerId);
+}
+
+/** 저장에 실패했을 때 다시 시도한다. */
+export function retrySync(): void {
+  const { ownerId } = store.getSnapshot();
+  if (ownerId === GUEST_OWNER) return;
+  pendingOwner = ownerId;
+  void flushPush();
 }
 
 function toIngredientMap(ingredients: Ingredient[]): Map<string, Ingredient> {
@@ -761,6 +891,10 @@ export function clearAll(): void {
 export interface UseDataResult {
   ready: boolean;
   ownerId: string;
+  /** 서버 저장 상태 */
+  sync: SyncStatus;
+  syncError: string | null;
+  retrySync: typeof retrySync;
   ingredients: Ingredient[];
   menus: Menu[];
   preps: Prep[];
@@ -830,6 +964,9 @@ export function useData(): UseDataResult {
     () => ({
       ready: authReady && state.ready && state.ownerId === ownerId,
       ownerId,
+      sync: state.sync,
+      syncError: state.syncError,
+      retrySync,
       ingredients,
       menus,
       preps,
@@ -868,6 +1005,8 @@ export function useData(): UseDataResult {
       authReady,
       state.ready,
       state.ownerId,
+      state.sync,
+      state.syncError,
       ownerId,
       ingredients,
       menus,

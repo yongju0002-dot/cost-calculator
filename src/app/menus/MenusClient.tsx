@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/Icons';
 import { useToast } from '@/components/ui/Toast';
 import { LoginGate } from '@/components/layout/LoginGate';
+import { SyncStatus } from '@/components/layout/SyncStatus';
 import { useAuth } from '@/lib/auth/auth';
 import { useData } from '@/lib/store/data';
 import { formatPercent, formatPercentDelta, formatWon, formatWonDelta } from '@/lib/domain/money';
@@ -59,6 +60,7 @@ export function MenusClient() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16 pt-6 sm:px-6">
+      <SyncStatus />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-ink-900 sm:text-3xl">내 메뉴</h1>
