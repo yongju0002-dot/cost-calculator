@@ -3,7 +3,11 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# npm ci 는 package-lock.json 이 package.json 과 정확히 일치해야 한다.
+# 로컬에서 npm install 을 돌릴 수 없는 상태로 의존성을 추가했기 때문에
+# 잠금 파일을 컨테이너에서 다시 만들도록 install 을 쓴다.
+# 로컬 환경이 복구되면 npm install 로 잠금 파일을 갱신하고 npm ci 로 되돌릴 것.
+RUN npm install --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app

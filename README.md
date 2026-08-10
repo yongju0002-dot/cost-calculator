@@ -84,9 +84,25 @@ tests/cost.test.ts         계산 로직 테스트
 
 ### 로그인
 
-이메일 + 비밀번호(SHA-256 + salt) 로컬 인증입니다. Google 로그인 버튼은 준비되어 있으며,
-OAuth 연동 시 `src/lib/auth/auth.ts` 의 `signInWithGoogle()` 만 교체하면 됩니다.
-(`NEXT_PUBLIC_GOOGLE_CLIENT_ID` 환경변수를 인식합니다.)
+두 가지 방식을 지원하며, 환경변수 유무로 자동 전환됩니다.
+
+| 조건 | 동작 |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` 있음 | **Supabase 서버 로그인** (이메일 + 구글). 다른 기기에서도 같은 계정 |
+| 없음 | 브라우저 로컬 계정 (서버 없이 동작하는 대비책) |
+
+덕분에 코드를 먼저 배포해 빌드를 확인한 뒤, 환경변수를 넣는 순간 로그인이 켜집니다.
+문제가 생기면 환경변수를 지우는 것만으로 즉시 되돌릴 수 있습니다.
+
+**Supabase 쪽 설정 (한 번만)**
+
+1. `supabase/schema.sql` 을 SQL Editor 에서 실행 (테이블 + RLS)
+2. Authentication → Providers → Google 활성화 후 Google Cloud 에서 발급한 클라이언트 ID/시크릿 입력
+3. Authentication → URL Configuration
+   - Site URL: `https://wongago.com`
+   - Redirect URLs: `https://wongago.com/auth/callback`, `http://localhost:3000/auth/callback`
+
+3번을 빼먹으면 구글 로그인 후 엉뚱한 주소로 돌아가 로그인이 완료되지 않습니다.
 
 ## 향후 확장을 고려한 부분
 

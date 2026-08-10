@@ -13,7 +13,7 @@ type Mode = 'signin' | 'signup';
 
 export function LoginClient() {
   const router = useRouter();
-  const { user, ready, signIn, signUp, signInWithGoogle, signOut } = useAuth();
+  const { user, ready, signIn, signUp, signInWithGoogle, signOut, isServerAuth } = useAuth();
   const { showToast } = useToast();
 
   const [mode, setMode] = useState<Mode>('signin');
@@ -22,6 +22,8 @@ export function LoginClient() {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  /** 가입 확인 메일을 보낸 경우, 안내 화면으로 전환한다. */
+  const [confirmSentTo, setConfirmSentTo] = useState<string | null>(null);
 
   /**
    * 로그인 후 돌아갈 주소. 렌더 중이 아니라 실제로 이동할 때 읽는다.
@@ -39,7 +41,11 @@ export function LoginClient() {
     setPending(true);
     try {
       if (mode === 'signup') {
-        await signUp({ email, password, name });
+        const result = await signUp({ email, password, name });
+        if (result.needsEmailConfirm) {
+          setConfirmSentTo(email);
+          return;
+        }
         showToast('가입이 완료되었습니다. 이제 재료와 메뉴를 저장할 수 있어요.', 'success');
       } else {
         await signIn({ email, password });
@@ -56,14 +62,39 @@ export function LoginClient() {
   const handleGoogle = async () => {
     setError(null);
     try {
-      await signInWithGoogle();
-      router.push(nextPath());
+      // 성공하면 구글 로그인 화면으로 이동하고, 끝나면 /auth/callback 으로 돌아온다.
+      await signInWithGoogle(nextPath());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google 로그인을 사용할 수 없습니다.');
     }
   };
 
   if (!ready) return null;
+
+  if (confirmSentTo) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16 sm:px-6">
+        <Card className="text-center">
+          <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 text-2xl">
+            ✉️
+          </span>
+          <h1 className="text-lg font-extrabold text-ink-900">확인 메일을 보냈습니다</h1>
+          <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
+            <b className="text-ink-700">{confirmSentTo}</b> 로 보낸 메일에서 링크를 눌러주시면 가입이
+            완료됩니다. 메일이 보이지 않으면 스팸함도 확인해주세요.
+          </p>
+          <div className="mt-6 flex flex-col gap-2">
+            <Button variant="secondary" onClick={() => setConfirmSentTo(null)}>
+              다른 이메일로 가입하기
+            </Button>
+            <Link href="/calculator" className={buttonClass('ghost', 'md')}>
+              먼저 원가 계산부터 해보기
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   if (user) {
     return (
@@ -98,8 +129,9 @@ export function LoginClient() {
             </Button>
           </div>
           <p className="mt-5 text-xs leading-relaxed text-ink-400">
-            재료·메뉴 정보는 지금 사용 중인 브라우저에 저장됩니다. 다른 기기에서 보려면 해당 기기에서 다시
-            가입해주세요.
+            {isServerAuth
+              ? '계정은 서버에 안전하게 보관되어 다른 기기에서도 같은 계정으로 로그인할 수 있습니다.'
+              : '재료·메뉴 정보는 지금 사용 중인 브라우저에 저장됩니다. 다른 기기에서 보려면 해당 기기에서 다시 가입해주세요.'}
           </p>
         </Card>
       </div>
@@ -213,7 +245,9 @@ export function LoginClient() {
       </Card>
 
       <p className="mt-5 text-center text-xs leading-relaxed text-ink-400">
-        계정과 저장 데이터는 지금 사용 중인 브라우저에만 보관되며 외부로 전송되지 않습니다.
+        {isServerAuth
+          ? '가입하면 다른 기기에서도 같은 계정으로 로그인할 수 있습니다.'
+          : '계정과 저장 데이터는 지금 사용 중인 브라우저에만 보관되며 외부로 전송되지 않습니다.'}
       </p>
     </div>
   );
