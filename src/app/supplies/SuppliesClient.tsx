@@ -22,6 +22,7 @@ import { BulkImportModal } from '@/components/bulk/BulkImportModal';
 import { useAuth } from '@/lib/auth/auth';
 import { useData, type SupplyInput } from '@/lib/store/data';
 import { computeUnitCost } from '@/lib/domain/cost';
+import { limitReachedMessage } from '@/lib/domain/limits';
 import {
   applyThousandSeparator,
   formatPercentDelta,
@@ -77,7 +78,8 @@ type SortKey = 'recent' | 'name' | 'unitCost';
 
 export function SuppliesClient() {
   const { user, ready: authReady } = useAuth();
-  const { supplies, menus, addSupply, updateSupply, removeSupply, addSuppliesBulk } = useData();
+  const { supplies, menus, limits, addSupply, updateSupply, removeSupply, addSuppliesBulk } =
+    useData();
   const { showToast } = useToast();
 
   const [keyword, setKeyword] = useState('');
@@ -180,7 +182,11 @@ export function SuppliesClient() {
       return;
     }
 
-    addSupply(input);
+    const created = addSupply(input);
+    if (!created) {
+      showToast(limitReachedMessage('supplies'), 'warning');
+      return;
+    }
     setFormOpen(false);
     showToast(`${input.name}을(를) 부자재에 추가했습니다.`, 'success');
   };
@@ -203,12 +209,19 @@ export function SuppliesClient() {
           <p className="mt-1.5 text-[15px] text-ink-500">
             포장용기·젓가락·냅킨처럼 메뉴와 함께 나가는 소모품을 관리합니다.
           </p>
+          <p className={`tnum mt-1 text-xs font-bold ${limits.supplies.atLimit ? 'text-red-500' : 'text-ink-400'}`}>
+            {limits.supplies.count}/{limits.supplies.max}개 등록됨
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setBulkOpen(true)}>
+          <Button
+            variant="secondary"
+            disabled={limits.supplies.atLimit}
+            onClick={() => setBulkOpen(true)}
+          >
             대량 등록
           </Button>
-          <Button onClick={openCreate}>
+          <Button disabled={limits.supplies.atLimit} onClick={openCreate}>
             <IconPlus width={18} height={18} />
             부자재 추가
           </Button>
@@ -440,7 +453,13 @@ export function SuppliesClient() {
         onClose={() => setBulkOpen(false)}
         onSubmit={(rows) => {
           const created = addSuppliesBulk(rows);
-          showToast(`부자재 ${created.length}개를 등록했습니다.`, 'success');
+          const skipped = rows.length - created.length;
+          showToast(
+            skipped > 0
+              ? `부자재 ${created.length}개를 등록했습니다. (${limitReachedMessage('supplies')} ${skipped}건은 등록되지 않았습니다.)`
+              : `부자재 ${created.length}개를 등록했습니다.`,
+            skipped > 0 ? 'warning' : 'success',
+          );
         }}
       />
 

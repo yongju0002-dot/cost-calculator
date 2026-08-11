@@ -16,6 +16,7 @@ import { PurchaseHistoryModal } from '@/components/purchase/PurchaseHistoryModal
 import { useAuth } from '@/lib/auth/auth';
 import { useData, type IngredientInput } from '@/lib/store/data';
 import { computeUnitCost, ingredientUnitCost } from '@/lib/domain/cost';
+import { limitReachedMessage } from '@/lib/domain/limits';
 import {
   applyThousandSeparator,
   formatPercentDelta,
@@ -64,6 +65,7 @@ export function IngredientsClient() {
     ingredients,
     menus,
     preps,
+    limits,
     addIngredient,
     updateIngredient,
     removeIngredient,
@@ -165,7 +167,11 @@ export function IngredientsClient() {
       return;
     }
 
-    addIngredient(input);
+    const created = addIngredient(input);
+    if (!created) {
+      showToast(limitReachedMessage('ingredients'), 'warning');
+      return;
+    }
     setFormOpen(false);
     showToast(`${input.name}을(를) 내 재료에 추가했습니다.`, 'success');
   };
@@ -191,12 +197,19 @@ export function IngredientsClient() {
           <p className="mt-1.5 text-[15px] text-ink-500">
             자주 쓰는 식재료를 저장해 두면 메뉴를 만들 때 바로 불러올 수 있습니다.
           </p>
+          <p className={`tnum mt-1 text-xs font-bold ${limits.ingredients.atLimit ? 'text-red-500' : 'text-ink-400'}`}>
+            {limits.ingredients.count}/{limits.ingredients.max}개 등록됨
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setBulkOpen(true)}>
+          <Button
+            variant="secondary"
+            disabled={limits.ingredients.atLimit}
+            onClick={() => setBulkOpen(true)}
+          >
             대량 등록
           </Button>
-          <Button onClick={openCreate}>
+          <Button disabled={limits.ingredients.atLimit} onClick={openCreate}>
             <IconPlus width={18} height={18} />
             재료 추가
           </Button>
@@ -406,7 +419,13 @@ export function IngredientsClient() {
         onClose={() => setBulkOpen(false)}
         onSubmit={(rows) => {
           const created = addIngredientsBulk(rows);
-          showToast(`재료 ${created.length}개를 등록했습니다.`, 'success');
+          const skipped = rows.length - created.length;
+          showToast(
+            skipped > 0
+              ? `재료 ${created.length}개를 등록했습니다. (${limitReachedMessage('ingredients')} ${skipped}건은 등록되지 않았습니다.)`
+              : `재료 ${created.length}개를 등록했습니다.`,
+            skipped > 0 ? 'warning' : 'success',
+          );
         }}
       />
 

@@ -22,6 +22,7 @@ import {
   costRateLevel,
 } from '@/lib/domain/cost';
 import { applyThousandSeparator, formatPercent, formatWon, parseNumberInput } from '@/lib/domain/money';
+import { limitReachedMessage } from '@/lib/domain/limits';
 import { setDraft, resetDraft, restorePersistedDraft, useDraft } from '@/lib/store/draftStore';
 import type { Ingredient } from '@/lib/domain/types';
 import {
@@ -62,6 +63,7 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
     menus,
     menuViews,
     categories,
+    limits,
     addMenu,
     updateMenu,
     addCategory,
@@ -189,7 +191,11 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
       updateMenu(menuIdParam, payload);
       showToast(`'${draft.name}' 메뉴를 수정했습니다.`, 'success');
     } else {
-      addMenu(payload);
+      const created = addMenu(payload);
+      if (!created) {
+        showToast(limitReachedMessage('menus'), 'warning');
+        return;
+      }
       resetDraft();
       showToast(`'${draft.name}' 메뉴를 저장했습니다.`, 'success');
     }
@@ -449,8 +455,22 @@ export function CostCalculator({ menuId }: { menuId?: string }) {
             <CardTitle description={user ? '내 메뉴에서 언제든 수정할 수 있습니다.' : '저장하려면 무료 회원가입이 필요합니다.'}>
               {editingMenu ? '메뉴 수정' : '메뉴 저장'}
             </CardTitle>
+            {user && !editingMenu ? (
+              <p
+                className={`tnum mb-3 text-xs font-bold ${
+                  limits.menus.atLimit ? 'text-red-500' : 'text-ink-400'
+                }`}
+              >
+                {limits.menus.count}/{limits.menus.max}개 저장됨
+                {limits.menus.atLimit ? ` · ${limitReachedMessage('menus')}` : ''}
+              </p>
+            ) : null}
             <div className="flex flex-col gap-2">
-              <Button size="lg" onClick={handleSave}>
+              <Button
+                size="lg"
+                disabled={Boolean(user) && !editingMenu && limits.menus.atLimit}
+                onClick={handleSave}
+              >
                 {editingMenu ? '수정 내용 저장하기' : '내 메뉴에 저장하기'}
               </Button>
               <Button variant="secondary" onClick={() => setResetOpen(true)}>

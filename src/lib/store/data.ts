@@ -10,6 +10,7 @@ import {
   purchaseUnitCost,
   type CostSources,
 } from '@/lib/domain/cost';
+import { limitStatus, type LimitStatus } from '@/lib/domain/limits';
 import { buildMenuView, type MenuView } from '@/lib/domain/menuView';
 import { createSampleData } from '@/lib/domain/sample';
 import type {
@@ -377,7 +378,9 @@ function recalculate(data: AppData): { data: AppData; affected: AffectedMenu[] }
   return { data: { ...data, preps, menus }, affected };
 }
 
-export function addIngredient(input: IngredientInput): Ingredient {
+/** 무료 한도에 걸리면 null 을 돌려준다. */
+export function addIngredient(input: IngredientInput): Ingredient | null {
+  if (limitStatus('ingredients', store.getSnapshot().data.ingredients.length).atLimit) return null;
   const at = nowIso();
   const ingredient: Ingredient = {
     id: createId('ing'),
@@ -467,9 +470,11 @@ export function removeIngredient(id: string): void {
   });
 }
 
-export function addMenu(input: MenuInput): Menu {
+/** 무료 한도에 걸리면 null 을 돌려준다. */
+export function addMenu(input: MenuInput): Menu | null {
   const at = nowIso();
   const { data, ownerId } = store.getSnapshot();
+  if (limitStatus('menus', data.menus.length).atLimit) return null;
   const base: Menu = {
     id: createId('menu'),
     ownerId,
@@ -520,9 +525,12 @@ export function updateMenu(id: string, input: MenuInput): Menu | null {
   return updated;
 }
 
+/** 원본이 없거나 무료 한도에 걸리면 null 을 돌려준다. */
 export function duplicateMenu(id: string): Menu | null {
-  const source = store.getSnapshot().data.menus.find((m) => m.id === id);
+  const { data } = store.getSnapshot();
+  const source = data.menus.find((m) => m.id === id);
   if (!source) return null;
+  if (limitStatus('menus', data.menus.length).atLimit) return null;
   const at = nowIso();
   const copy: Menu = {
     ...source,
@@ -545,7 +553,9 @@ export function removeMenu(id: string): void {
 // 부자재
 // ─────────────────────────────────────────────────────────
 
-export function addSupply(input: SupplyInput): Supply {
+/** 무료 한도에 걸리면 null 을 돌려준다. */
+export function addSupply(input: SupplyInput): Supply | null {
+  if (limitStatus('supplies', (store.getSnapshot().data.supplies ?? []).length).atLimit) return null;
   const at = nowIso();
   const supply: Supply = {
     id: createId('sup'),
@@ -639,9 +649,11 @@ export function removeSupply(id: string): void {
 // 프렙
 // ─────────────────────────────────────────────────────────
 
-export function addPrep(input: PrepInput): Prep {
+/** 무료 한도에 걸리면 null 을 돌려준다. */
+export function addPrep(input: PrepInput): Prep | null {
   const at = nowIso();
   const { data, ownerId } = store.getSnapshot();
+  if (limitStatus('preps', (data.preps ?? []).length).atLimit) return null;
   const base: Prep = {
     id: createId('prep'),
     ownerId,
@@ -707,9 +719,12 @@ export function removePrep(id: string): void {
   }));
 }
 
+/** 원본이 없거나 무료 한도에 걸리면 null 을 돌려준다. */
 export function duplicatePrep(id: string): Prep | null {
-  const source = (store.getSnapshot().data.preps ?? []).find((p) => p.id === id);
+  const preps = store.getSnapshot().data.preps ?? [];
+  const source = preps.find((p) => p.id === id);
   if (!source) return null;
+  if (limitStatus('preps', preps.length).atLimit) return null;
   const at = nowIso();
   const copy: Prep = {
     ...source,
@@ -804,11 +819,17 @@ function applyPricingToTargets(data: AppData): AppData {
   };
 }
 
-/** 여러 건을 한 번에 등록한다. (대량 등록) */
+/**
+ * 여러 건을 한 번에 등록한다. (대량 등록)
+ * 남은 자리보다 많이 넘어오면 앞에서부터 자리가 있는 만큼만 등록한다.
+ * 반환값의 길이가 inputs 보다 짧으면 한도에 걸려 일부가 등록되지 않은 것이다.
+ */
 export function addIngredientsBulk(inputs: IngredientInput[]): Ingredient[] {
+  const { ownerId, data } = store.getSnapshot();
+  const remaining = limitStatus('ingredients', data.ingredients.length).remaining;
+  const allowed = inputs.slice(0, remaining);
   const at = nowIso();
-  const ownerId = store.getSnapshot().ownerId;
-  const created = inputs.map<Ingredient>((input) => ({
+  const created = allowed.map<Ingredient>((input) => ({
     id: createId('ing'),
     ownerId,
     name: input.name.trim(),
@@ -835,10 +856,13 @@ export function addIngredientsBulk(inputs: IngredientInput[]): Ingredient[] {
   return created;
 }
 
+/** 남은 자리보다 많이 넘어오면 앞에서부터 자리가 있는 만큼만 등록한다. */
 export function addSuppliesBulk(inputs: SupplyInput[]): Supply[] {
+  const { ownerId, data } = store.getSnapshot();
+  const remaining = limitStatus('supplies', (data.supplies ?? []).length).remaining;
+  const allowed = inputs.slice(0, remaining);
   const at = nowIso();
-  const ownerId = store.getSnapshot().ownerId;
-  const created = inputs.map<Supply>((input) => ({
+  const created = allowed.map<Supply>((input) => ({
     id: createId('sup'),
     ownerId,
     name: input.name.trim(),
@@ -906,6 +930,13 @@ export interface UseDataResult {
   supplyMap: Map<string, Supply>;
   /** 원가 계산에 필요한 저장 데이터 묶음 */
   sources: CostSources;
+  /** 무료 요금제 한도 대비 현재 등록 개수 */
+  limits: {
+    ingredients: LimitStatus;
+    preps: LimitStatus;
+    menus: LimitStatus;
+    supplies: LimitStatus;
+  };
   categories: string[];
   addIngredient: typeof addIngredient;
   updateIngredient: typeof updateIngredient;
@@ -959,6 +990,15 @@ export function useData(): UseDataResult {
     [menus, sources],
   );
   const categories = useMemo(() => mergeCategories(customCategories), [customCategories]);
+  const limits = useMemo(
+    () => ({
+      ingredients: limitStatus('ingredients', ingredients.length),
+      preps: limitStatus('preps', preps.length),
+      menus: limitStatus('menus', menus.length),
+      supplies: limitStatus('supplies', supplies.length),
+    }),
+    [ingredients.length, preps.length, menus.length, supplies.length],
+  );
 
   return useMemo(
     () => ({
@@ -977,6 +1017,7 @@ export function useData(): UseDataResult {
       prepMap,
       supplyMap,
       sources,
+      limits,
       categories,
       addIngredient,
       updateIngredient,
@@ -1018,6 +1059,7 @@ export function useData(): UseDataResult {
       prepMap,
       supplyMap,
       sources,
+      limits,
       categories,
     ],
   );

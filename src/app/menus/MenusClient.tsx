@@ -22,11 +22,12 @@ import { SyncStatus } from '@/components/layout/SyncStatus';
 import { useAuth } from '@/lib/auth/auth';
 import { useData } from '@/lib/store/data';
 import { formatPercent, formatPercentDelta, formatWon, formatWonDelta } from '@/lib/domain/money';
+import { limitReachedMessage } from '@/lib/domain/limits';
 import type { Menu } from '@/lib/domain/types';
 
 export function MenusClient() {
   const { user, ready: authReady } = useAuth();
-  const { menuViews, duplicateMenu, removeMenu, loadSampleData } = useData();
+  const { menuViews, limits, duplicateMenu, removeMenu, loadSampleData } = useData();
   const { showToast } = useToast();
 
   const [keyword, setKeyword] = useState('');
@@ -66,6 +67,9 @@ export function MenusClient() {
           <h1 className="text-2xl font-extrabold tracking-tight text-ink-900 sm:text-3xl">내 메뉴</h1>
           <p className="mt-1.5 text-[15px] text-ink-500">
             저장한 메뉴 {menuViews.length}개의 원가와 원가율을 관리합니다.
+          </p>
+          <p className={`tnum mt-1 text-xs font-bold ${limits.menus.atLimit ? 'text-red-500' : 'text-ink-400'}`}>
+            {limits.menus.count}/{limits.menus.max}개 등록됨
           </p>
         </div>
         <Link href="/calculator" className={buttonClass('primary', 'md')}>
@@ -202,6 +206,7 @@ export function MenusClient() {
                       onClick={() => {
                         const copy = duplicateMenu(view.menu.id);
                         if (copy) showToast(`'${copy.name}'을(를) 만들었습니다.`, 'success');
+                        else showToast(limitReachedMessage('menus'), 'warning');
                       }}
                     >
                       <IconCopy width={16} height={16} />

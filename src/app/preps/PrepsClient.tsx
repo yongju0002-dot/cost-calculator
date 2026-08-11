@@ -30,6 +30,7 @@ import {
   prepUnitCost,
   syncPrepItems,
 } from '@/lib/domain/cost';
+import { limitReachedMessage } from '@/lib/domain/limits';
 import {
   applyThousandSeparator,
   formatPercentDelta,
@@ -101,6 +102,7 @@ export function PrepsClient() {
     menus,
     ingredients,
     ingredientMap,
+    limits,
     addPrep,
     updatePrep,
     removePrep,
@@ -240,7 +242,11 @@ export function PrepsClient() {
       return;
     }
 
-    addPrep(payload);
+    const created = addPrep(payload);
+    if (!created) {
+      showToast(limitReachedMessage('preps'), 'warning');
+      return;
+    }
     setFormOpen(false);
     showToast(`'${form.name}' 프렙을 저장했습니다.`, 'success');
   };
@@ -256,8 +262,11 @@ export function PrepsClient() {
           <p className="mt-1.5 text-[15px] text-ink-500">
             양념장·육수처럼 미리 만들어두는 반제품입니다. 메뉴에서는 사용한 만큼만 원가에 반영됩니다.
           </p>
+          <p className={`tnum mt-1 text-xs font-bold ${limits.preps.atLimit ? 'text-red-500' : 'text-ink-400'}`}>
+            {limits.preps.count}/{limits.preps.max}개 등록됨
+          </p>
         </div>
-        <Button onClick={openCreate}>
+        <Button disabled={limits.preps.atLimit} onClick={openCreate}>
           <IconPlus width={18} height={18} />
           프렙 추가
         </Button>
@@ -376,6 +385,7 @@ export function PrepsClient() {
                         onClick={() => {
                           const copy = duplicatePrep(prep.id);
                           if (copy) showToast(`'${copy.name}'을(를) 만들었습니다.`, 'success');
+                          else showToast(limitReachedMessage('preps'), 'warning');
                         }}
                       >
                         <IconCopy width={16} height={16} />
