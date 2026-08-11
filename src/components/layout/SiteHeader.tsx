@@ -43,7 +43,12 @@ export function SiteHeader() {
                 {link.label}
               </Link>
             ))}
-            {user ? (
+          </nav>
+        </div>
+
+        <div className="hidden items-center gap-2 md:flex">
+          {!ready ? null : user ? (
+            <>
               <Link
                 href="/dashboard"
                 className={`rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
@@ -54,13 +59,6 @@ export function SiteHeader() {
               >
                 대시보드
               </Link>
-            ) : null}
-          </nav>
-        </div>
-
-        <div className="hidden items-center gap-2 md:flex">
-          {!ready ? null : user ? (
-            <>
               <span className="max-w-[10rem] truncate text-sm font-semibold text-ink-600">
                 {user.name}님
               </span>
