@@ -1,10 +1,14 @@
 import type { Metadata, Viewport } from 'next';
+import { GoogleAnalytics } from '@next/third-parties/google';
 import './globals.css';
 import { SiteHeader } from '@/components/layout/SiteHeader';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { MobileTabBar } from '@/components/layout/MobileTabBar';
 import { Providers } from './providers';
 import { SITE_URL } from '@/lib/seo';
+
+/** 구글 애널리틱스(GA4) 속성 ID. 비어 있으면 아예 붙이지 않는다. */
+const GA_ID = (process.env.NEXT_PUBLIC_GA_ID ?? '').trim();
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -78,6 +82,7 @@ export default function RootLayout({
           </div>
           <MobileTabBar />
         </Providers>
+        {GA_ID ? <GoogleAnalytics gaId={GA_ID} /> : null}
       </body>
     </html>
   );
