@@ -10,7 +10,7 @@ import { LoginGate } from '@/components/layout/LoginGate';
 import { Modal } from '@/components/ui/Modal';
 import { IconCheck } from '@/components/ui/Icons';
 import { useToast } from '@/components/ui/Toast';
-import { changeEmail, changePassword, deleteAccount, signOut, useAuth } from '@/lib/auth/auth';
+import { changePassword, deleteAccount, signOut, useAuth } from '@/lib/auth/auth';
 import { LIMIT_LABELS, PLAN_LABELS, type LimitTarget } from '@/lib/domain/limits';
 import { useData } from '@/lib/store/data';
 import { useProfile } from '@/lib/store/profile';
@@ -30,7 +30,7 @@ export function AccountClient() {
     return (
       <LoginGate
         title="내 계정은 로그인 후 볼 수 있어요"
-        description="이메일·비밀번호 변경, 요금제 확인, 회원 탈퇴는 로그인한 뒤 이용할 수 있습니다."
+        description="비밀번호 변경, 요금제 확인, 회원 탈퇴는 로그인한 뒤 이용할 수 있습니다."
         next="/account"
       />
     );
@@ -118,7 +118,7 @@ export function AccountClient() {
         ) : null}
       </Card>
 
-      {isServerAuth ? <SecuritySection email={user.email} /> : null}
+      {isServerAuth ? <SecuritySection /> : null}
 
       <Card>
         <CardTitle>데이터 관리</CardTitle>
@@ -188,12 +188,7 @@ function ProfileSection({
     <Card>
       <CardTitle>계정 정보</CardTitle>
       <div className="flex flex-col gap-3">
-        <TextField
-          label="이메일"
-          value={email}
-          disabled
-          hint="이메일은 아래 계정 보안에서 변경할 수 있습니다."
-        />
+        <TextField label="이메일" value={email} disabled hint="이메일은 변경할 수 없습니다." />
         <TextField
           label="이름"
           value={name}
@@ -233,10 +228,9 @@ function ProfileSection({
   );
 }
 
-function SecuritySection({ email }: { email: string }) {
+function SecuritySection() {
   const { showToast } = useToast();
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
 
   return (
     <Card>
@@ -244,9 +238,6 @@ function SecuritySection({ email }: { email: string }) {
       <div className="flex flex-col gap-2">
         <Button variant="secondary" className="justify-start" onClick={() => setPasswordModalOpen(true)}>
           비밀번호 변경
-        </Button>
-        <Button variant="secondary" className="justify-start" onClick={() => setEmailModalOpen(true)}>
-          이메일 변경
         </Button>
       </div>
 
@@ -256,15 +247,6 @@ function SecuritySection({ email }: { email: string }) {
         onSuccess={() => {
           setPasswordModalOpen(false);
           showToast('비밀번호가 변경되었습니다.', 'success');
-        }}
-      />
-      <EmailChangeModal
-        open={emailModalOpen}
-        currentEmail={email}
-        onClose={() => setEmailModalOpen(false)}
-        onSuccess={(newEmail) => {
-          setEmailModalOpen(false);
-          showToast(`${newEmail} 로 확인 메일을 보냈습니다. 링크를 눌러야 이메일이 바뀝니다.`, 'success');
         }}
       />
     </Card>
@@ -371,73 +353,6 @@ function PasswordChangeModal({
         ) : null}
         <Button type="submit" disabled={pending} className="mt-1">
           {pending ? '변경 중...' : '비밀번호 변경'}
-        </Button>
-      </form>
-    </Modal>
-  );
-}
-
-function EmailChangeModal({
-  open,
-  currentEmail,
-  onClose,
-  onSuccess,
-}: {
-  open: boolean;
-  currentEmail: string;
-  onClose: () => void;
-  onSuccess: (newEmail: string) => void;
-}) {
-  const [newEmail, setNewEmail] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    setPending(true);
-    try {
-      await changeEmail(newEmail);
-      const sentTo = newEmail;
-      setNewEmail('');
-      onSuccess(sentTo);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '문제가 발생했습니다. 다시 시도해주세요.');
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={() => {
-        setNewEmail('');
-        setError(null);
-        onClose();
-      }}
-      title="이메일 변경"
-      description={`현재 이메일: ${currentEmail}`}
-    >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <TextField
-          label="새 이메일"
-          type="email"
-          inputMode="email"
-          placeholder="new@example.com"
-          value={newEmail}
-          onChange={(e) => setNewEmail(e.target.value)}
-          autoComplete="email"
-          required
-        />
-        <p className="text-xs text-ink-500">
-          새 이메일로 확인 메일이 발송됩니다. 링크를 눌러야 실제로 이메일이 바뀝니다.
-        </p>
-        {error ? (
-          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>
-        ) : null}
-        <Button type="submit" disabled={pending} className="mt-1">
-          {pending ? '전송 중...' : '확인 메일 보내기'}
         </Button>
       </form>
     </Modal>

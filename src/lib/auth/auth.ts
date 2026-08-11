@@ -153,9 +153,6 @@ export function toKoreanAuthError(message: string): string {
   if (m.includes('failed to fetch') || m.includes('network')) {
     return '네트워크 연결을 확인한 뒤 다시 시도해주세요.';
   }
-  if (m.includes('new email should be different')) {
-    return '현재 이메일과 다른 주소를 입력해주세요.';
-  }
   return message;
 }
 
@@ -320,21 +317,6 @@ export async function changePassword(input: {
   if (verifyError) throw new Error('현재 비밀번호가 올바르지 않습니다.');
 
   const { error } = await supabase.auth.updateUser({ password: input.newPassword });
-  if (error) throw new Error(toKoreanAuthError(error.message));
-}
-
-/** 로그인 이메일을 바꾼다. 새 주소로 확인 메일이 발송되고, 링크를 눌러야 실제로 바뀐다. */
-export async function changeEmail(newEmail: string): Promise<void> {
-  const supabase = getSupabase();
-  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
-  const email = newEmail.trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new Error('올바른 이메일 주소를 입력해주세요.');
-  }
-  const { error } = await supabase.auth.updateUser(
-    { email },
-    { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent('/account')}` },
-  );
   if (error) throw new Error(toKoreanAuthError(error.message));
 }
 
