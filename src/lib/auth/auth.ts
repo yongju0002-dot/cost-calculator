@@ -299,6 +299,18 @@ export async function updatePasswordAfterReset(newPassword: string): Promise<voi
   if (error) throw new Error(toKoreanAuthError(error.message));
 }
 
+/** 현재 비밀번호가 맞는지 확인한다. 민감한 작업(정보 수정/탈퇴) 앞에 두는 본인 확인 관문. */
+export async function verifyPassword(password: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  const { data } = await supabase.auth.getSession();
+  const email = data.session?.user.email;
+  if (!email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
+
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new Error('비밀번호가 올바르지 않습니다.');
+}
+
 /** 로그인한 상태에서 비밀번호를 바꾼다. 본인 확인을 위해 현재 비밀번호로 먼저 다시 로그인한다. */
 export async function changePassword(input: {
   currentPassword: string;
@@ -306,15 +318,7 @@ export async function changePassword(input: {
 }): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
-  const { data } = await supabase.auth.getSession();
-  const email = data.session?.user.email;
-  if (!email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
-
-  const { error: verifyError } = await supabase.auth.signInWithPassword({
-    email,
-    password: input.currentPassword,
-  });
-  if (verifyError) throw new Error('현재 비밀번호가 올바르지 않습니다.');
+  await verifyPassword(input.currentPassword);
 
   const { error } = await supabase.auth.updateUser({ password: input.newPassword });
   if (error) throw new Error(toKoreanAuthError(error.message));
@@ -324,13 +328,10 @@ export async function changePassword(input: {
 export async function deleteAccount(password: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  await verifyPassword(password);
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
-  const email = data.session?.user.email;
-  if (!token || !email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
-
-  const { error: verifyError } = await supabase.auth.signInWithPassword({ email, password });
-  if (verifyError) throw new Error('비밀번호가 올바르지 않습니다.');
+  if (!token) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
 
   const res = await fetch('/api/account', {
     method: 'DELETE',

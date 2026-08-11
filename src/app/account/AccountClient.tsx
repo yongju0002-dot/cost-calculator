@@ -10,7 +10,7 @@ import { LoginGate } from '@/components/layout/LoginGate';
 import { Modal } from '@/components/ui/Modal';
 import { IconCheck } from '@/components/ui/Icons';
 import { useToast } from '@/components/ui/Toast';
-import { changePassword, deleteAccount, signOut, useAuth } from '@/lib/auth/auth';
+import { changePassword, deleteAccount, signOut, useAuth, verifyPassword } from '@/lib/auth/auth';
 import { LIMIT_LABELS, PLAN_LABELS, type LimitTarget } from '@/lib/domain/limits';
 import { useData } from '@/lib/store/data';
 import { useProfile } from '@/lib/store/profile';
@@ -164,6 +164,8 @@ function ProfileSection({
 }) {
   const { updateProfile } = useProfile();
   const { showToast } = useToast();
+  const [unlocked, setUnlocked] = useState(false);
+  const [gateOpen, setGateOpen] = useState(false);
   const [name, setName] = useState(initialName);
   const [storeName, setStoreName] = useState(initialStoreName);
   const [phone, setPhone] = useState(initialPhone);
@@ -171,12 +173,15 @@ function ProfileSection({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  const editable = ready && unlocked;
+
   const handleSave = async () => {
     setError(null);
     setPending(true);
     try {
       await updateProfile({ name, storeName, phone, avatarUrl });
       showToast('저장되었습니다.', 'success');
+      setUnlocked(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : '저장 중 문제가 발생했습니다.');
     } finally {
@@ -186,14 +191,24 @@ function ProfileSection({
 
   return (
     <Card>
-      <CardTitle>계정 정보</CardTitle>
+      <CardTitle
+        action={
+          !unlocked ? (
+            <Button variant="secondary" size="sm" disabled={!ready} onClick={() => setGateOpen(true)}>
+              정보 수정
+            </Button>
+          ) : null
+        }
+      >
+        계정 정보
+      </CardTitle>
       <div className="flex flex-col gap-3">
         <TextField label="이메일" value={email} disabled hint="이메일은 변경할 수 없습니다." />
         <TextField
           label="이름"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          disabled={!ready}
+          disabled={!editable}
           required
         />
         <TextField
@@ -201,30 +216,121 @@ function ProfileSection({
           placeholder="예) 행복식당"
           value={storeName}
           onChange={(e) => setStoreName(e.target.value)}
-          disabled={!ready}
+          disabled={!editable}
         />
         <TextField
           label="연락처 (선택)"
           placeholder="010-0000-0000"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          disabled={!ready}
+          disabled={!editable}
         />
         <TextField
           label="프로필 사진 URL (선택)"
           placeholder="https://..."
           value={avatarUrl}
           onChange={(e) => setAvatarUrl(e.target.value)}
-          disabled={!ready}
+          disabled={!editable}
         />
         {error ? (
           <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>
         ) : null}
-        <Button onClick={handleSave} disabled={!ready || pending} className="self-start">
-          {pending ? '저장 중...' : '수정'}
-        </Button>
+        {unlocked ? (
+          <div className="flex gap-2">
+            <Button onClick={handleSave} disabled={pending} className="self-start">
+              {pending ? '저장 중...' : '저장'}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={pending}
+              onClick={() => {
+                setName(initialName);
+                setStoreName(initialStoreName);
+                setPhone(initialPhone);
+                setAvatarUrl(initialAvatarUrl);
+                setError(null);
+                setUnlocked(false);
+              }}
+            >
+              취소
+            </Button>
+          </div>
+        ) : null}
       </div>
+
+      <PasswordGateModal
+        open={gateOpen}
+        title="본인 확인"
+        description="계정 정보를 수정하려면 비밀번호를 입력해주세요."
+        onClose={() => setGateOpen(false)}
+        onVerified={() => {
+          setGateOpen(false);
+          setUnlocked(true);
+        }}
+      />
     </Card>
+  );
+}
+
+function PasswordGateModal({
+  open,
+  title,
+  description,
+  onClose,
+  onVerified,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onClose: () => void;
+  onVerified: () => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    setPending(true);
+    try {
+      await verifyPassword(password);
+      setPassword('');
+      onVerified();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '문제가 발생했습니다. 다시 시도해주세요.');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => {
+        setPassword('');
+        setError(null);
+        onClose();
+      }}
+      title={title}
+      description={description}
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <PasswordField
+          label="비밀번호"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+          required
+        />
+        {error ? (
+          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>
+        ) : null}
+        <Button type="submit" disabled={pending} className="mt-1">
+          {pending ? '확인 중...' : '확인'}
+        </Button>
+      </form>
+    </Modal>
   );
 }
 
