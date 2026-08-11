@@ -22,7 +22,7 @@ const TABS = [
 export function MobileTabBar() {
   const pathname = usePathname();
   const { user } = useAuth();
-  const myHref = user ? '/dashboard' : '/login';
+  const myHref = user ? '/account' : '/login';
   const tabs = [...TABS, { href: myHref, label: '내정보', Icon: IconUser }];
 
   return (

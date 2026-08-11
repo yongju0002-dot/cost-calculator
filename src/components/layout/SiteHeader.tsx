@@ -64,21 +64,17 @@ export function SiteHeader() {
               <span className="max-w-[10rem] truncate text-sm font-semibold text-ink-600">
                 {user.name}님
               </span>
-              <button
-                type="button"
-                onClick={signOut}
-                className={buttonClass('secondary', 'sm')}
-              >
-                로그아웃
-              </button>
+              <Link href="/account" className={buttonClass('secondary', 'sm')}>
+                내 계정
+              </Link>
             </>
           ) : (
             <>
               <Link href="/login" className={buttonClass('secondary', 'sm')}>
                 로그인
               </Link>
-              <Link href="/calculator" className={buttonClass('primary', 'sm')}>
-                무료로 계산하기
+              <Link href="/login?mode=signup" className={buttonClass('primary', 'sm')}>
+                무료 회원가입
               </Link>
             </>
           )}
@@ -119,6 +115,13 @@ export function SiteHeader() {
                 >
                   대시보드
                 </Link>
+                <Link
+                  href="/account"
+                  onClick={closeMenu}
+                  className="rounded-lg px-3 py-3 text-[15px] font-semibold text-ink-700"
+                >
+                  내 계정 ({user.name})
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -127,17 +130,26 @@ export function SiteHeader() {
                   }}
                   className="rounded-lg px-3 py-3 text-left text-[15px] font-semibold text-ink-500"
                 >
-                  로그아웃 ({user.name})
+                  로그아웃
                 </button>
               </>
             ) : (
-              <Link
-                href="/login"
-                onClick={closeMenu}
-                className="rounded-lg px-3 py-3 text-[15px] font-semibold text-ink-700"
-              >
-                로그인
-              </Link>
+              <>
+                <Link
+                  href="/login"
+                  onClick={closeMenu}
+                  className="rounded-lg px-3 py-3 text-[15px] font-semibold text-ink-700"
+                >
+                  로그인
+                </Link>
+                <Link
+                  href="/login?mode=signup"
+                  onClick={closeMenu}
+                  className="rounded-lg px-3 py-3 text-[15px] font-semibold text-ink-700"
+                >
+                  무료 회원가입
+                </Link>
+              </>
             )}
             <Link
               href="/calculator"

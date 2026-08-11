@@ -27,6 +27,7 @@ import { isUnit, type Unit } from '@/lib/domain/units';
 import { createId, isBrowser, nowIso, readJson, storageKeys, writeJson } from '@/lib/storage/local';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { ExternalStore } from './externalStore';
+import { getCurrentPlan, useProfile } from './profile';
 import { fetchRemoteData, isEmptyData, pushRemoteData } from './remote';
 
 /**
@@ -380,7 +381,8 @@ function recalculate(data: AppData): { data: AppData; affected: AffectedMenu[] }
 
 /** 무료 한도에 걸리면 null 을 돌려준다. */
 export function addIngredient(input: IngredientInput): Ingredient | null {
-  if (limitStatus('ingredients', store.getSnapshot().data.ingredients.length).atLimit) return null;
+  if (limitStatus('ingredients', store.getSnapshot().data.ingredients.length, getCurrentPlan()).atLimit)
+    return null;
   const at = nowIso();
   const ingredient: Ingredient = {
     id: createId('ing'),
@@ -474,7 +476,7 @@ export function removeIngredient(id: string): void {
 export function addMenu(input: MenuInput): Menu | null {
   const at = nowIso();
   const { data, ownerId } = store.getSnapshot();
-  if (limitStatus('menus', data.menus.length).atLimit) return null;
+  if (limitStatus('menus', data.menus.length, getCurrentPlan()).atLimit) return null;
   const base: Menu = {
     id: createId('menu'),
     ownerId,
@@ -530,7 +532,7 @@ export function duplicateMenu(id: string): Menu | null {
   const { data } = store.getSnapshot();
   const source = data.menus.find((m) => m.id === id);
   if (!source) return null;
-  if (limitStatus('menus', data.menus.length).atLimit) return null;
+  if (limitStatus('menus', data.menus.length, getCurrentPlan()).atLimit) return null;
   const at = nowIso();
   const copy: Menu = {
     ...source,
@@ -555,7 +557,10 @@ export function removeMenu(id: string): void {
 
 /** 무료 한도에 걸리면 null 을 돌려준다. */
 export function addSupply(input: SupplyInput): Supply | null {
-  if (limitStatus('supplies', (store.getSnapshot().data.supplies ?? []).length).atLimit) return null;
+  if (
+    limitStatus('supplies', (store.getSnapshot().data.supplies ?? []).length, getCurrentPlan()).atLimit
+  )
+    return null;
   const at = nowIso();
   const supply: Supply = {
     id: createId('sup'),
@@ -653,7 +658,7 @@ export function removeSupply(id: string): void {
 export function addPrep(input: PrepInput): Prep | null {
   const at = nowIso();
   const { data, ownerId } = store.getSnapshot();
-  if (limitStatus('preps', (data.preps ?? []).length).atLimit) return null;
+  if (limitStatus('preps', (data.preps ?? []).length, getCurrentPlan()).atLimit) return null;
   const base: Prep = {
     id: createId('prep'),
     ownerId,
@@ -724,7 +729,7 @@ export function duplicatePrep(id: string): Prep | null {
   const preps = store.getSnapshot().data.preps ?? [];
   const source = preps.find((p) => p.id === id);
   if (!source) return null;
-  if (limitStatus('preps', preps.length).atLimit) return null;
+  if (limitStatus('preps', preps.length, getCurrentPlan()).atLimit) return null;
   const at = nowIso();
   const copy: Prep = {
     ...source,
@@ -826,7 +831,7 @@ function applyPricingToTargets(data: AppData): AppData {
  */
 export function addIngredientsBulk(inputs: IngredientInput[]): Ingredient[] {
   const { ownerId, data } = store.getSnapshot();
-  const remaining = limitStatus('ingredients', data.ingredients.length).remaining;
+  const remaining = limitStatus('ingredients', data.ingredients.length, getCurrentPlan()).remaining;
   const allowed = inputs.slice(0, remaining);
   const at = nowIso();
   const created = allowed.map<Ingredient>((input) => ({
@@ -859,7 +864,7 @@ export function addIngredientsBulk(inputs: IngredientInput[]): Ingredient[] {
 /** 남은 자리보다 많이 넘어오면 앞에서부터 자리가 있는 만큼만 등록한다. */
 export function addSuppliesBulk(inputs: SupplyInput[]): Supply[] {
   const { ownerId, data } = store.getSnapshot();
-  const remaining = limitStatus('supplies', (data.supplies ?? []).length).remaining;
+  const remaining = limitStatus('supplies', (data.supplies ?? []).length, getCurrentPlan()).remaining;
   const allowed = inputs.slice(0, remaining);
   const at = nowIso();
   const created = allowed.map<Supply>((input) => ({
@@ -964,6 +969,7 @@ export interface UseDataResult {
 
 export function useData(): UseDataResult {
   const { user, ready: authReady } = useAuth();
+  const { plan } = useProfile();
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
   const ownerId = user?.id ?? GUEST_OWNER;
 
@@ -992,12 +998,12 @@ export function useData(): UseDataResult {
   const categories = useMemo(() => mergeCategories(customCategories), [customCategories]);
   const limits = useMemo(
     () => ({
-      ingredients: limitStatus('ingredients', ingredients.length),
-      preps: limitStatus('preps', preps.length),
-      menus: limitStatus('menus', menus.length),
-      supplies: limitStatus('supplies', supplies.length),
+      ingredients: limitStatus('ingredients', ingredients.length, plan),
+      preps: limitStatus('preps', preps.length, plan),
+      menus: limitStatus('menus', menus.length, plan),
+      supplies: limitStatus('supplies', supplies.length, plan),
     }),
-    [ingredients.length, preps.length, menus.length, supplies.length],
+    [ingredients.length, preps.length, menus.length, supplies.length, plan],
   );
 
   return useMemo(

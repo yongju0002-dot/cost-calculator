@@ -127,7 +127,7 @@ function startSupabaseSync(): void {
 }
 
 /** Supabase 가 돌려주는 영어 오류를 사장님이 이해할 수 있는 문장으로 바꾼다. */
-function toKoreanAuthError(message: string): string {
+export function toKoreanAuthError(message: string): string {
   const m = message.toLowerCase();
   if (m.includes('invalid login credentials')) return '이메일 또는 비밀번호가 올바르지 않습니다.';
   if (m.includes('email not confirmed')) return '가입 확인 메일의 링크를 먼저 눌러주세요.';
@@ -135,6 +135,9 @@ function toKoreanAuthError(message: string): string {
     return '이미 가입된 이메일입니다. 로그인해주세요.';
   }
   if (m.includes('password should be at least')) return '비밀번호는 6자 이상으로 입력해주세요.';
+  if (m.includes('should be different from the old password') || m.includes('same as the old password')) {
+    return '현재 비밀번호와 다른 새 비밀번호를 입력해주세요.';
+  }
   if (m.includes('invalid email') || m.includes('unable to validate email')) {
     return '올바른 이메일 주소를 입력해주세요.';
   }
@@ -143,6 +146,15 @@ function toKoreanAuthError(message: string): string {
   }
   if (m.includes('provider is not enabled')) {
     return 'Google 로그인이 아직 켜져 있지 않습니다. 이메일로 가입해주세요.';
+  }
+  if (m.includes('session') && (m.includes('expired') || m.includes('missing') || m.includes('not found'))) {
+    return '로그인이 만료되었습니다. 다시 로그인해주세요.';
+  }
+  if (m.includes('failed to fetch') || m.includes('network')) {
+    return '네트워크 연결을 확인한 뒤 다시 시도해주세요.';
+  }
+  if (m.includes('new email should be different')) {
+    return '현재 이메일과 다른 주소를 입력해주세요.';
   }
   return message;
 }
@@ -265,6 +277,89 @@ export async function signOut(): Promise<void> {
     return;
   }
   persistLocalSession(null);
+}
+
+/** 비밀번호를 잊은 경우, 재설정 링크를 메일로 보낸다. (서버 계정 전용) */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error('이 브라우저 계정은 비밀번호 재설정 메일을 보낼 수 없습니다. 관리자에게 문의해주세요.');
+  }
+  // 실제 링크 형식(token_hash 방식)은 Supabase 대시보드의 "Reset Password" 메일
+  // 템플릿에서 결정된다 ( /auth/confirm?token_hash=...&type=recovery&next=... ).
+  // 여기서 넘기는 redirectTo 는 그 템플릿이 {{ .RedirectTo }} 를 쓸 때를 위한 보조값이다.
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+    redirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent('/auth/reset-password')}`,
+  });
+  if (error) throw new Error(toKoreanAuthError(error.message));
+}
+
+/** 비밀번호 재설정 메일의 링크를 눌러 세션이 생긴 뒤, 새 비밀번호로 바꾼다. */
+export async function updatePasswordAfterReset(newPassword: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw new Error(toKoreanAuthError(error.message));
+}
+
+/** 로그인한 상태에서 비밀번호를 바꾼다. 본인 확인을 위해 현재 비밀번호로 먼저 다시 로그인한다. */
+export async function changePassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  const { data } = await supabase.auth.getSession();
+  const email = data.session?.user.email;
+  if (!email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
+
+  const { error: verifyError } = await supabase.auth.signInWithPassword({
+    email,
+    password: input.currentPassword,
+  });
+  if (verifyError) throw new Error('현재 비밀번호가 올바르지 않습니다.');
+
+  const { error } = await supabase.auth.updateUser({ password: input.newPassword });
+  if (error) throw new Error(toKoreanAuthError(error.message));
+}
+
+/** 로그인 이메일을 바꾼다. 새 주소로 확인 메일이 발송되고, 링크를 눌러야 실제로 바뀐다. */
+export async function changeEmail(newEmail: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  const email = newEmail.trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('올바른 이메일 주소를 입력해주세요.');
+  }
+  const { error } = await supabase.auth.updateUser(
+    { email },
+    { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent('/account')}` },
+  );
+  if (error) throw new Error(toKoreanAuthError(error.message));
+}
+
+/** 회원 탈퇴. 서버 라우트가 본인 확인 후 계정과 서버 데이터를 완전히 지운다. */
+export async function deleteAccount(password: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const email = data.session?.user.email;
+  if (!token || !email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
+
+  const { error: verifyError } = await supabase.auth.signInWithPassword({ email, password });
+  if (verifyError) throw new Error('비밀번호가 올바르지 않습니다.');
+
+  const res = await fetch('/api/account', {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message ?? '탈퇴 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.');
+  }
+  await supabase.auth.signOut();
+  store.replace({ user: null, ready: true });
 }
 
 export interface UseAuthResult extends AuthState {

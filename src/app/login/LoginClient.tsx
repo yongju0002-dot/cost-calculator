@@ -8,18 +8,21 @@ import { Card } from '@/components/ui/Card';
 import { Checkbox, PasswordField, TextField } from '@/components/ui/Field';
 import { IconCheck } from '@/components/ui/Icons';
 import { useToast } from '@/components/ui/Toast';
-import { useAuth } from '@/lib/auth/auth';
+import { requestPasswordReset, useAuth } from '@/lib/auth/auth';
 
 const MIN_PASSWORD_LENGTH = 6;
 
-type Mode = 'signin' | 'signup';
+type Mode = 'signin' | 'signup' | 'forgot';
 
 export function LoginClient() {
   const router = useRouter();
   const { user, ready, signIn, signUp, signInWithGoogle, signOut, isServerAuth } = useAuth();
   const { showToast } = useToast();
 
-  const [mode, setMode] = useState<Mode>('signin');
+  const [mode, setMode] = useState<Mode>(() => {
+    if (typeof window === 'undefined') return 'signin';
+    return new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'signin';
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -31,6 +34,8 @@ export function LoginClient() {
   const [pending, setPending] = useState(false);
   /** 가입 확인 메일을 보낸 경우, 안내 화면으로 전환한다. */
   const [confirmSentTo, setConfirmSentTo] = useState<string | null>(null);
+  /** 비밀번호 재설정 메일을 보낸 경우, 안내 화면으로 전환한다. */
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null);
 
   const passwordLongEnough = password.length >= MIN_PASSWORD_LENGTH;
   const passwordsMatch = password.length > 0 && password === passwordConfirm;
@@ -52,6 +57,19 @@ export function LoginClient() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+
+    if (mode === 'forgot') {
+      setPending(true);
+      try {
+        await requestPasswordReset(email);
+        setResetSentTo(email);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '문제가 발생했습니다. 다시 시도해주세요.');
+      } finally {
+        setPending(false);
+      }
+      return;
+    }
 
     if (mode === 'signup') {
       if (!passwordsMatch) {
@@ -123,6 +141,34 @@ export function LoginClient() {
     );
   }
 
+  if (resetSentTo) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16 sm:px-6">
+        <Card className="text-center">
+          <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-50 text-2xl">
+            ✉️
+          </span>
+          <h1 className="text-lg font-extrabold text-ink-900">재설정 메일을 보냈습니다</h1>
+          <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
+            <b className="text-ink-700">{resetSentTo}</b> 로 보낸 메일에서 링크를 눌러 새 비밀번호를
+            설정해주세요. 메일이 보이지 않으면 스팸함도 확인해주세요.
+          </p>
+          <div className="mt-6 flex flex-col gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setResetSentTo(null);
+                setMode('signin');
+              }}
+            >
+              로그인 화면으로
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (user) {
     return (
       <div className="mx-auto max-w-lg px-4 py-14 sm:px-6">
@@ -169,31 +215,35 @@ export function LoginClient() {
     <div className="mx-auto max-w-lg px-4 py-12 sm:px-6">
       <div className="text-center">
         <h1 className="text-2xl font-extrabold tracking-tight text-ink-900">
-          {mode === 'signin' ? '로그인' : '무료 회원가입'}
+          {mode === 'signin' ? '로그인' : mode === 'signup' ? '무료 회원가입' : '비밀번호 재설정'}
         </h1>
         <p className="mt-2 text-[15px] text-ink-500">
-          회원가입하면 재료·메뉴 저장, 원가 변동 관리, 대시보드를 사용할 수 있습니다.
+          {mode === 'forgot'
+            ? '가입할 때 쓴 이메일을 입력하면 재설정 링크를 보내드립니다.'
+            : '회원가입하면 재료·메뉴 저장, 원가 변동 관리, 대시보드를 사용할 수 있습니다.'}
         </p>
       </div>
 
       <Card className="mt-6">
-        <div className="mb-5 grid grid-cols-2 rounded-xl bg-ink-100 p-1">
-          {(['signin', 'signup'] as Mode[]).map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => {
-                setMode(value);
-                setError(null);
-              }}
-              className={`h-10 rounded-lg text-sm font-bold transition-colors ${
-                mode === value ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500'
-              }`}
-            >
-              {value === 'signin' ? '로그인' : '회원가입'}
-            </button>
-          ))}
-        </div>
+        {mode !== 'forgot' ? (
+          <div className="mb-5 grid grid-cols-2 rounded-xl bg-ink-100 p-1">
+            {(['signin', 'signup'] as Mode[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setMode(value);
+                  setError(null);
+                }}
+                className={`h-10 rounded-lg text-sm font-bold transition-colors ${
+                  mode === value ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500'
+                }`}
+              >
+                {value === 'signin' ? '로그인' : '회원가입'}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {mode === 'signup' ? (
@@ -215,14 +265,28 @@ export function LoginClient() {
             autoComplete="email"
             required
           />
-          <PasswordField
-            label="비밀번호"
-            placeholder="6자 이상"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            required
-          />
+          {mode !== 'forgot' ? (
+            <PasswordField
+              label="비밀번호"
+              placeholder="6자 이상"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              required
+            />
+          ) : null}
+          {mode === 'signin' ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMode('forgot');
+                setError(null);
+              }}
+              className="-mt-1.5 self-end text-xs font-semibold text-brand-600 underline"
+            >
+              비밀번호를 잊으셨나요?
+            </button>
+          ) : null}
           {mode === 'signup' && password.length > 0 ? (
             <p
               className={`-mt-1.5 flex items-center gap-1 pl-1 text-xs font-semibold ${
@@ -298,17 +362,37 @@ export function LoginClient() {
           ) : null}
 
           <Button type="submit" size="lg" disabled={pending} className="mt-1">
-            {pending ? '처리 중...' : mode === 'signin' ? '로그인' : '가입하고 시작하기'}
+            {pending
+              ? '처리 중...'
+              : mode === 'signin'
+                ? '로그인'
+                : mode === 'signup'
+                  ? '가입하고 시작하기'
+                  : '재설정 메일 보내기'}
           </Button>
+          {mode === 'forgot' ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin');
+                setError(null);
+              }}
+              className="self-center text-xs font-semibold text-ink-500 underline"
+            >
+              로그인 화면으로 돌아가기
+            </button>
+          ) : null}
         </form>
 
-        <div className="my-5 flex items-center gap-3">
-          <span className="h-px flex-1 bg-ink-200" />
-          <span className="text-xs font-semibold text-ink-400">또는</span>
-          <span className="h-px flex-1 bg-ink-200" />
-        </div>
+        {mode === 'forgot' ? null : (
+          <>
+            <div className="my-5 flex items-center gap-3">
+              <span className="h-px flex-1 bg-ink-200" />
+              <span className="text-xs font-semibold text-ink-400">또는</span>
+              <span className="h-px flex-1 bg-ink-200" />
+            </div>
 
-        <Button variant="secondary" size="lg" className="w-full" onClick={handleGoogle}>
+            <Button variant="secondary" size="lg" className="w-full" onClick={handleGoogle}>
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
             <path
               fill="#4285F4"
@@ -337,6 +421,8 @@ export function LoginClient() {
           </Link>
           은 무료로 사용할 수 있습니다.
         </p>
+          </>
+        )}
       </Card>
 
       <p className="mt-5 text-center text-xs leading-relaxed text-ink-400">
