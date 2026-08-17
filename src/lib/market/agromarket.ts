@@ -107,27 +107,45 @@ function daysAgoYmd(daysAgo: number): string {
 // 요청 상한 (429 방지)
 // ─────────────────────────────────────────────
 
-const MAX_IN_FLIGHT = 4;
-const GAP_MS = 120;
+/**
+ * 동시에 열어둘 요청 수와 요청 사이 최소 간격.
+ *
+ * 실제로 측정해 정한 값이다.
+ *  - 429 는 "초당 요청 수"에서 걸린다. 동시 5개 + 150ms 간격(≈초당 19건)까지는 429 가
+ *    전혀 없었고, 간격 없이 몰아쳤을 때만 막혔다. 그래서 간격(GAP_MS)으로 초당 건수를
+ *    묶어두고, 동시 실행 수는 넉넉하게 준다.
+ *  - 이 API 는 건당 응답 시간이 200ms ~ 2.6초로 불규칙하다(같은 조건에서도 매번 다르다).
+ *    동시 실행 수가 작으면 느린 요청 하나에 전체가 발목을 잡히므로 넉넉히 열어
+ *    느린 요청들이 서로 겹치게 한다.
+ */
+const MAX_IN_FLIGHT = 24;
+const GAP_MS = 50;
 
 let inFlight = 0;
 const waiting: (() => void)[] = [];
-let lastStart = 0;
+/** 다음 요청을 보낼 수 있는 가장 이른 시각 */
+let nextSlotAt = 0;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * 공공 API 호출을 전역에서 제한한다.
  * 라우트가 분류별로 동시에 여러 번 호출돼도 실제 외부 요청은 이 상한을 넘지 않는다.
+ *
+ * 순서가 중요하다. 간격 대기를 먼저 하고 그 다음에 동시실행 슬롯을 잡는다.
+ * 슬롯을 잡은 채로 기다리면 기다리는 동안 슬롯이 놀아서, 동시 실행 수를 늘려도
+ * 처리량이 "1건당 GAP_MS" 로 묶여 버린다. (이 때문에 처음엔 초당 8건밖에 못 냈다)
  */
 async function acquire(): Promise<void> {
-  if (inFlight >= MAX_IN_FLIGHT) {
+  const now = Date.now();
+  const startAt = Math.max(now, nextSlotAt);
+  nextSlotAt = startAt + GAP_MS;
+  if (startAt > now) await sleep(startAt - now);
+
+  while (inFlight >= MAX_IN_FLIGHT) {
     await new Promise<void>((resolve) => waiting.push(resolve));
   }
   inFlight += 1;
-  const wait = lastStart + GAP_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastStart = Date.now();
 }
 
 function release(): void {

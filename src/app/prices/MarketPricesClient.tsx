@@ -256,39 +256,40 @@ export function MarketPricesClient() {
   useEffect(() => {
     let cancelled = false;
 
-    // 보고 있는 분류를 먼저, 나머지는 순서대로 뒤이어 받는다.
-    const order: Group[] = [
-      ...(activeGroup === '전체' ? [] : [activeGroup]),
-      ...MARKET_GROUPS.filter((g) => g !== activeGroup),
-    ];
+    const load = async (group: Group) => {
+      const cacheKey = `${scope}|${group}`;
+      // 이미 받았거나 실패한 분류는 건너뛴다. (재시도는 reloadToken 으로 다시 들어온다)
+      if (loaded[cacheKey] || failedGroups[cacheKey]) return;
+      try {
+        const res = await fetch(
+          `/api/market-prices?group=${encodeURIComponent(group)}&channel=${channel}${
+            region ? `&region=${region}` : ''
+          }`,
+        );
+        const body = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok) {
+          setFailedGroups((prev) => ({
+            ...prev,
+            [cacheKey]: body?.message ?? '시세를 불러오지 못했습니다.',
+          }));
+          return;
+        }
+        setLoaded((prev) => ({ ...prev, [cacheKey]: body as GroupPayload }));
+      } catch {
+        if (cancelled) return;
+        setFailedGroups((prev) => ({ ...prev, [cacheKey]: '시세를 불러오지 못했습니다.' }));
+      }
+    };
 
     (async () => {
-      for (const group of order) {
-        if (cancelled) return;
-        const cacheKey = `${scope}|${group}`;
-        // 이미 받았거나 실패한 분류는 건너뛴다. (재시도는 reloadToken 으로 다시 들어온다)
-        if (loaded[cacheKey] || failedGroups[cacheKey]) continue;
-        try {
-          const res = await fetch(
-            `/api/market-prices?group=${encodeURIComponent(group)}&channel=${channel}${
-              region ? `&region=${region}` : ''
-            }`,
-          );
-          const body = await res.json().catch(() => null);
-          if (cancelled) return;
-          if (!res.ok) {
-            setFailedGroups((prev) => ({
-              ...prev,
-              [cacheKey]: body?.message ?? '시세를 불러오지 못했습니다.',
-            }));
-            continue;
-          }
-          setLoaded((prev) => ({ ...prev, [cacheKey]: body as GroupPayload }));
-        } catch {
-          if (cancelled) return;
-          setFailedGroups((prev) => ({ ...prev, [cacheKey]: '시세를 불러오지 못했습니다.' }));
-        }
-      }
+      // 보고 있는 분류를 먼저 띄우고, 나머지는 한꺼번에 받는다.
+      // 하나씩 순서대로 기다리면 전체 시간이 분류별 시간의 "합"이 된다.
+      // 서버 쪽에 요청 상한이 걸려 있으므로 한꺼번에 보내도 공공 API 에 무리가 가지 않는다.
+      const first: Group = activeGroup === '전체' ? MARKET_GROUPS[0] : activeGroup;
+      await load(first);
+      if (cancelled) return;
+      await Promise.all(MARKET_GROUPS.filter((g) => g !== first).map(load));
     })();
 
     return () => {

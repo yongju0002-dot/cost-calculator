@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchGroupPrices, isMarketApiConfigured, type SalesChannel } from '@/lib/market/agromarket';
+import { cachedValue } from '@/lib/market/cache';
 import { MARKET_GROUPS, MARKET_REGIONS, type MarketGroup } from '@/lib/market/catalog';
 
 /**
@@ -42,7 +43,13 @@ export async function GET(request: NextRequest) {
   const region = rawRegion && MARKET_REGIONS.some((r) => r.code === rawRegion) ? rawRegion : null;
 
   try {
-    const result = await fetchGroupPrices(group, channel, region, REVALIDATE_SECONDS);
+    // 오래된 값이라도 바로 돌려주고 갱신은 뒤에서 한다. 캐시가 만료되는 순간에 들어온
+    // 사장님이 전체 조회 시간을 그대로 기다리지 않도록 하는 장치다.
+    const result = await cachedValue(
+      `prices|${group}|${channel}|${region ?? ''}`,
+      REVALIDATE_SECONDS * 1000,
+      () => fetchGroupPrices(group, channel, region, REVALIDATE_SECONDS),
+    );
     return NextResponse.json(result, {
       headers: {
         'Cache-Control': `public, s-maxage=${REVALIDATE_SECONDS}, stale-while-revalidate=600`,
