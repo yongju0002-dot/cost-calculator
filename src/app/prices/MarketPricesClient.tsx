@@ -11,6 +11,7 @@ import { formatWon } from '@/lib/domain/money';
 import { MARKET_GROUPS, MARKET_REGIONS } from '@/lib/market/catalog';
 import { useData } from '@/lib/store/data';
 import { matchingIngredients } from './marketMatch';
+import { PriceHistoryModal, type HistoryTarget } from './PriceHistoryModal';
 
 /**
  * 농산물 시세 화면.
@@ -106,44 +107,70 @@ function Sparkline({ points, rate }: { points: PricePoint[]; rate: number | null
   );
 }
 
-function PriceRowItem({ row, myIngredients }: { row: PriceRow; myIngredients: string[] }) {
+function PriceRowItem({
+  row,
+  myIngredients,
+  onSelect,
+}: {
+  row: PriceRow;
+  myIngredients: string[];
+  onSelect: (target: HistoryTarget) => void;
+}) {
   const detail = [row.variety, row.grade !== row.variety ? row.grade : null].filter(Boolean).join(' · ');
   const matched = matchingIngredients(row.name, myIngredients);
 
   return (
-    <li className="flex items-center gap-3 border-b border-ink-100 py-3 last:border-b-0">
-      <span className="shrink-0 text-xl" aria-hidden="true">
-        {row.emoji}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="flex flex-wrap items-center gap-1.5 text-[15px] font-bold text-ink-900">
-          {row.name}
-          {matched.length > 0 ? <Badge tone="brand">내 재료</Badge> : null}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-ink-500">
-          {detail}
-          {/* 조사 시장 수는 좁은 화면에서 줄바꿈을 만들어 넓은 화면에서만 보여준다. */}
-          <span className="hidden sm:inline"> · 시장 {row.marketCount}곳 평균</span>
-        </p>
-      </div>
-      {/* 추이 그래프는 좁은 화면에서 가격 칸을 밀어내므로 숨긴다. */}
-      <span className="hidden sm:block">
-        <Sparkline points={row.trend} rate={row.changeRate} />
-      </span>
-      <div className="w-[6.5rem] shrink-0 text-right sm:w-[7.5rem]">
-        <p className="tnum text-[15px] font-extrabold text-ink-900">
-          {formatWon(row.price)}
-          <span className="ml-0.5 block text-[11px] font-bold text-ink-500">/ {row.unitLabel}</span>
-        </p>
-        <ChangeText rate={row.changeRate} className="mt-0.5 text-xs" />
-      </div>
+    <li className="border-b border-ink-100 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+        className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-ink-50/70"
+        aria-label={`${row.name} 가격 추이 보기`}
+      >
+        <span className="shrink-0 text-xl" aria-hidden="true">
+          {row.emoji}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-1.5 text-[15px] font-bold text-ink-900">
+            {row.name}
+            {matched.length > 0 ? <Badge tone="brand">내 재료</Badge> : null}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-ink-500">
+            {detail}
+            {/* 조사 시장 수는 좁은 화면에서 줄바꿈을 만들어 넓은 화면에서만 보여준다. */}
+            <span className="hidden sm:inline"> · 시장 {row.marketCount}곳 평균</span>
+          </p>
+        </div>
+        {/* 추이 그래프는 좁은 화면에서 가격 칸을 밀어내므로 숨긴다. */}
+        <span className="hidden sm:block">
+          <Sparkline points={row.trend} rate={row.changeRate} />
+        </span>
+        <div className="w-[6.5rem] shrink-0 text-right sm:w-[7.5rem]">
+          <p className="tnum text-[15px] font-extrabold text-ink-900">
+            {formatWon(row.price)}
+            <span className="ml-0.5 block text-[11px] font-bold text-ink-500">/ {row.unitLabel}</span>
+          </p>
+          <ChangeText rate={row.changeRate} className="mt-0.5 text-xs" />
+        </div>
+      </button>
     </li>
   );
 }
 
-function HighlightCard({ row }: { row: PriceRow }) {
+function HighlightCard({
+  row,
+  onSelect,
+}: {
+  row: PriceRow;
+  onSelect: (target: HistoryTarget) => void;
+}) {
   return (
-    <div className="rounded-xl border border-ink-200 bg-white p-4">
+    <button
+      type="button"
+      onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+      className="rounded-xl border border-ink-200 bg-white p-4 text-left transition-colors hover:border-brand-300"
+      aria-label={`${row.name} 가격 추이 보기`}
+    >
       <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-700">
         <span aria-hidden="true">{row.emoji}</span>
         {row.name}
@@ -151,11 +178,21 @@ function HighlightCard({ row }: { row: PriceRow }) {
       <p className="tnum mt-2 text-lg font-extrabold text-ink-900">{formatWon(row.price)}</p>
       <p className="text-[11px] font-semibold text-ink-500">/ {row.unitLabel}</p>
       <ChangeText rate={row.changeRate} className="mt-1.5 text-xs" />
-    </div>
+    </button>
   );
 }
 
-function MoverList({ title, rows, emptyText }: { title: string; rows: PriceRow[]; emptyText: string }) {
+function MoverList({
+  title,
+  rows,
+  emptyText,
+  onSelect,
+}: {
+  title: string;
+  rows: PriceRow[];
+  emptyText: string;
+  onSelect: (target: HistoryTarget) => void;
+}) {
   return (
     <Card>
       <h2 className="text-[15px] font-bold text-ink-900">{title}</h2>
@@ -164,12 +201,19 @@ function MoverList({ title, rows, emptyText }: { title: string; rows: PriceRow[]
       ) : (
         <ul className="mt-2 flex flex-col divide-y divide-ink-100">
           {rows.map((row) => (
-            <li key={row.key} className="flex items-center justify-between gap-3 py-2.5">
-              <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink-800">
-                <span aria-hidden="true">{row.emoji}</span>
-                <span className="truncate">{row.name}</span>
-              </span>
-              <ChangeText rate={row.changeRate} className="shrink-0 text-sm" />
+            <li key={row.key}>
+              <button
+                type="button"
+                onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+                className="flex w-full items-center justify-between gap-3 py-2.5 text-left transition-colors hover:text-brand-600"
+                aria-label={`${row.name} 가격 추이 보기`}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink-800">
+                  <span aria-hidden="true">{row.emoji}</span>
+                  <span className="truncate">{row.name}</span>
+                </span>
+                <ChangeText rate={row.changeRate} className="shrink-0 text-sm" />
+              </button>
             </li>
           ))}
         </ul>
@@ -201,6 +245,8 @@ export function MarketPricesClient() {
   const [loaded, setLoaded] = useState<Record<string, GroupPayload>>({});
   const [failedGroups, setFailedGroups] = useState<Record<string, string>>({});
   const [reloadToken, setReloadToken] = useState(0);
+  /** 가격 추이를 보고 있는 품목 */
+  const [historyTarget, setHistoryTarget] = useState<HistoryTarget | null>(null);
 
   const { ingredients } = useData();
   const myIngredientNames = useMemo(() => ingredients.map((i) => i.name), [ingredients]);
@@ -358,7 +404,7 @@ export function MarketPricesClient() {
           <h2 className="text-[15px] font-extrabold text-ink-900">오늘의 주요 시세</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {highlights.map((row) => (
-              <HighlightCard key={row.key} row={row} />
+              <HighlightCard key={row.key} row={row} onSelect={setHistoryTarget} />
             ))}
           </div>
         </section>
@@ -373,7 +419,12 @@ export function MarketPricesClient() {
           <Card padded={false} className="mt-3 overflow-hidden">
             <ul className="px-4 sm:px-5">
               {myRows.map((row) => (
-                <PriceRowItem key={row.key} row={row} myIngredients={myIngredientNames} />
+                <PriceRowItem
+                  key={row.key}
+                  row={row}
+                  myIngredients={myIngredientNames}
+                  onSelect={setHistoryTarget}
+                />
               ))}
             </ul>
           </Card>
@@ -386,8 +437,8 @@ export function MarketPricesClient() {
       {/* 오른/내린 품목 */}
       {withChange.length > 0 ? (
         <section className="mt-7 grid gap-4 sm:grid-cols-2">
-          <MoverList title="📈 가격이 오른 품목" rows={risers} emptyText="오른 품목이 없습니다." />
-          <MoverList title="📉 가격이 내려간 품목" rows={fallers} emptyText="내려간 품목이 없습니다." />
+          <MoverList title="📈 가격이 오른 품목" rows={risers} emptyText="오른 품목이 없습니다." onSelect={setHistoryTarget} />
+          <MoverList title="📉 가격이 내려간 품목" rows={fallers} emptyText="내려간 품목이 없습니다." onSelect={setHistoryTarget} />
         </section>
       ) : null}
 
@@ -459,7 +510,12 @@ export function MarketPricesClient() {
             ) : (
               <ul>
                 {visibleRows.map((row) => (
-                  <PriceRowItem key={row.key} row={row} myIngredients={myIngredientNames} />
+                  <PriceRowItem
+                  key={row.key}
+                  row={row}
+                  myIngredients={myIngredientNames}
+                  onSelect={setHistoryTarget}
+                />
                 ))}
               </ul>
             )}
@@ -489,6 +545,13 @@ export function MarketPricesClient() {
         품종·등급에 따라 가격이 크게 다르므로 대표 품종 하나를 기준으로 보여줍니다. 지역·거래처에 따라
         실제 구매가격과 차이가 날 수 있어 참고용으로만 사용해주세요.
       </p>
+
+      <PriceHistoryModal
+        target={historyTarget}
+        channel={channel}
+        region={region}
+        onClose={() => setHistoryTarget(null)}
+      />
     </div>
   );
 }

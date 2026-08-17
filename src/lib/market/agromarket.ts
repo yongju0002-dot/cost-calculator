@@ -401,3 +401,172 @@ export async function fetchGroupPrices(
     latestDate: rows.reduce<string | null>((max, r) => (!max || r.date > max ? r.date : max), null),
   };
 }
+
+// ─────────────────────────────────────────────
+// 품목 하나의 기간별 가격 추이
+// ─────────────────────────────────────────────
+
+export const HISTORY_PERIODS = ['7d', '1m', '3m', '1y'] as const;
+export type HistoryPeriod = (typeof HISTORY_PERIODS)[number];
+
+export const HISTORY_PERIOD_LABELS: Record<HistoryPeriod, string> = {
+  '7d': '7일',
+  '1m': '1개월',
+  '3m': '3개월',
+  '1y': '1년',
+};
+
+/**
+ * 기간을 짧은 창 여러 개로 "표본 추출" 한다.
+ *
+ * 1년치를 한 번에 받으면 안 된다. 이 API 는 조사일×시장 단위로 행이 나오고 한 페이지가
+ * 1000행이라, 소(쇠고기)처럼 품종이 많은 품목은 1년이면 6만 행(=60페이지)이 된다.
+ * 그렇게 몰아치면 429 로 막힌다.
+ *
+ * 대신 기간 안에 3일짜리 창을 일정 간격으로 두고 각 창의 최신 조사일만 뽑는다.
+ * 그러면 호출 수가 품목 크기와 무관하게 창 개수(8~12개)로 고정된다.
+ * 추이 그래프는 촘촘한 일별 값보다 흐름이 중요하므로 이 방식으로 충분하다.
+ */
+function sampleWindows(period: HistoryPeriod): { from: string; to: string }[] {
+  const win = (fromDaysAgo: number, toDaysAgo: number) => ({
+    from: daysAgoYmd(fromDaysAgo),
+    to: daysAgoYmd(toDaysAgo),
+  });
+
+  /**
+   * 가장 최근 구간은 항상 9일로 넉넉히 잡는다.
+   * 품목마다 마지막 조사일이 며칠씩 다르기 때문에(양파는 오늘 기준 4일 전이 최신이었다)
+   * 좁게 잡으면 "지금 가격"이 그래프에서 빠진다.
+   */
+  const recent = win(9, 0);
+
+  if (period === '7d') return [recent];
+  // 1개월은 창 두 개로 기간 전체를 덮어 조사일을 촘촘히 쓴다.
+  if (period === '1m') return [win(32, 16), win(18, 0)];
+
+  // 3개월·1년은 일정 간격으로 6일짜리 창을 두고 각 창의 최신 조사일만 뽑는다.
+  const { step, count } = period === '3m' ? { step: 15, count: 6 } : { step: 30, count: 12 };
+  const windows: { from: string; to: string }[] = [];
+  for (let i = count; i >= 1; i -= 1) {
+    const offset = i * step;
+    windows.push(win(offset + 6, offset));
+  }
+  windows.push(recent);
+  return windows;
+}
+
+export interface HistoryPoint {
+  date: string;
+  price: number;
+  marketCount: number;
+}
+
+export interface ItemHistoryResult {
+  key: string;
+  name: string;
+  channel: SalesChannel;
+  region: string | null;
+  period: HistoryPeriod;
+  /** 비교 가능한 기준 (이 단위·품종끼리만 이어 붙인다) */
+  unitLabel: string;
+  variety: string;
+  points: HistoryPoint[];
+}
+
+/**
+ * 같은 창 안에서 "이어 붙일 수 있는" 그룹을 고른다.
+ *
+ * 단위가 다르면 가격을 나란히 놓을 수 없으므로(1kg vs 100g) 단위가 같은 것만 쓴다.
+ * 품종명은 조사일마다 바뀌는 경우가 있어(닭 → 육계12호/육계(kg)) 같은 품종을 우선하되,
+ * 없으면 단위가 같은 그룹 중 조사 시장이 많은 쪽을 쓴다.
+ */
+function pickComparable(groups: Group[], unitLabel: string, variety: string): Group | null {
+  const sameUnit = groups.filter((g) => g.unitLabel === unitLabel);
+  if (sameUnit.length === 0) return null;
+  const sameVariety = sameUnit.filter((g) => g.variety === variety);
+  const pool = sameVariety.length > 0 ? sameVariety : sameUnit;
+  return [...pool].sort((a, b) => {
+    const aLatest = datesDesc(a)[0] ?? '';
+    const bLatest = datesDesc(b)[0] ?? '';
+    if (aLatest !== bLatest) return bLatest.localeCompare(aLatest);
+    return (b.byDate.get(bLatest)?.length ?? 0) - (a.byDate.get(aLatest)?.length ?? 0);
+  })[0];
+}
+
+/** 품목 하나의 기간별 가격 추이. */
+export async function fetchItemHistory(
+  cfg: CatalogItem,
+  channel: SalesChannel,
+  region: string | null,
+  period: HistoryPeriod,
+  revalidate: number,
+): Promise<ItemHistoryResult> {
+  if (!isMarketApiConfigured()) throw new Error('시세 기능이 아직 설정되지 않았습니다.');
+
+  const se = SALES_CHANNELS[channel];
+  const windows = sampleWindows(period);
+
+  const perWindow = await Promise.all(
+    windows.map(async (w) => {
+      try {
+        const rows = await fetchWindow(cfg, se, w.from, w.to, revalidate);
+        return groupRows(rows, region);
+      } catch {
+        return [] as Group[];
+      }
+    }),
+  );
+
+  // 기준은 가장 최근 창(마지막)에서 정한다. 그 창이 비면 뒤에서부터 찾는다.
+  let reference: Group | null = null;
+  for (let i = perWindow.length - 1; i >= 0 && !reference; i -= 1) {
+    reference = pickGroup(perWindow[i], cfg.variety);
+  }
+  if (!reference) {
+    return {
+      key: cfg.key,
+      name: cfg.name,
+      channel,
+      region,
+      period,
+      unitLabel: '',
+      variety: '',
+      points: [],
+    };
+  }
+
+  // 7일·1개월은 창이 기간 전체를 덮으므로 조사일을 모두 쓴다.
+  // 3개월·1년은 창이 띄엄띄엄 있으므로 창마다 최신 조사일 하나만 쓴다.
+  const useAllDates = period === '7d' || period === '1m';
+
+  const points: HistoryPoint[] = [];
+  for (const groups of perWindow) {
+    const group = pickComparable(groups, reference.unitLabel, reference.variety);
+    if (!group) continue;
+    const dates = datesDesc(group);
+    const wanted = useAllDates ? [...dates].reverse() : dates.slice(0, 1);
+    for (const d of wanted) {
+      const prices = group.byDate.get(d) ?? [];
+      if (prices.length > 0) {
+        points.push({ date: d, price: average(prices), marketCount: prices.length });
+      }
+    }
+  }
+
+  // 창이 겹쳐 같은 조사일이 두 번 들어가는 경우를 정리한다.
+  const seen = new Set<string>();
+  const unique = points
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .filter((p) => (seen.has(p.date) ? false : (seen.add(p.date), true)));
+
+  return {
+    key: cfg.key,
+    name: cfg.name,
+    channel,
+    region,
+    period,
+    unitLabel: reference.unitLabel,
+    variety: reference.variety,
+    points: unique,
+  };
+}
