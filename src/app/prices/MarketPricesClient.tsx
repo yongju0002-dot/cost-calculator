@@ -1,26 +1,38 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { IconArrowDown, IconArrowUp } from '@/components/ui/Icons';
+import { SelectField, TextField } from '@/components/ui/Field';
+import { IconArrowDown, IconArrowUp, IconSearch } from '@/components/ui/Icons';
 import { formatWon } from '@/lib/domain/money';
+import { MARKET_GROUPS, MARKET_REGIONS } from '@/lib/market/catalog';
+import { useData } from '@/lib/store/data';
+import { matchingIngredients } from './marketMatch';
 
 /**
  * 농산물 시세 화면.
  *
  * 실제 데이터는 서버 라우트(/api/market-prices)가 공공데이터포털에서 받아온다.
- * (인증키가 브라우저에 노출되면 안 되고, 그 API 는 브라우저에서 직접 호출할 수도 없다)
+ * 그 API 는 품목코드가 필수라 품목당 한 번씩 불러야 해서, 분류(채소/과일/…)별로 나눠
+ * 받고 먼저 도착한 분류부터 화면에 채운다.
  */
 
 type Channel = 'retail' | 'wholesale';
+type Group = (typeof MARKET_GROUPS)[number];
+
+interface PricePoint {
+  date: string;
+  price: number;
+}
 
 interface PriceRow {
   key: string;
-  label: string;
-  group: string;
+  name: string;
+  emoji: string;
+  group: Group;
   variety: string;
   grade: string;
   unitLabel: string;
@@ -30,177 +42,309 @@ interface PriceRow {
   prevPrice: number | null;
   prevDate: string | null;
   changeRate: number | null;
+  trend: PricePoint[];
 }
 
-interface PricesPayload {
+interface GroupPayload {
   rows: PriceRow[];
   latestDate: string | null;
 }
 
-const CHANNEL_LABEL: Record<Channel, string> = { retail: '소매', wholesale: '도매' };
+/** 첫 화면에서 눈에 띄게 보여줄 대표 품목 (없으면 조용히 건너뛴다) */
+const HIGHLIGHT_KEYS = ['200_245', '200_211', '200_246', '100_152', '500_4304_삼겹살', '500_9903'];
 
 function formatYmd(ymd: string): string {
   if (ymd.length !== 8) return ymd;
-  return `${Number(ymd.slice(4, 6))}월 ${Number(ymd.slice(6, 8))}일`;
+  return `${ymd.slice(0, 4)}.${ymd.slice(4, 6)}.${ymd.slice(6, 8)}`;
 }
 
 /** 원가가 오르면 사장님에게 불리하므로 상승을 빨간색으로 본다. 색만으로 구분하지 않도록 기호·문구를 함께 쓴다. */
-function ChangeBadge({ rate }: { rate: number | null }) {
-  if (rate === null) {
-    return <span className="text-sm text-ink-400">비교 자료 없음</span>;
-  }
-  if (rate === 0) {
-    return <span className="tnum text-sm font-semibold text-ink-500">변동 없음</span>;
-  }
+function ChangeText({ rate, className = '' }: { rate: number | null; className?: string }) {
+  if (rate === null) return <span className={`text-xs text-ink-400 ${className}`}>비교 자료 없음</span>;
+  if (rate === 0) return <span className={`tnum text-xs font-semibold text-ink-500 ${className}`}>변동 없음</span>;
   const up = rate > 0;
   const Icon = up ? IconArrowUp : IconArrowDown;
   return (
     <span
-      className={`tnum inline-flex items-center gap-0.5 text-sm font-bold ${
-        up ? 'text-red-600' : 'text-sky-600'
-      }`}
+      className={`tnum inline-flex items-center gap-0.5 font-bold ${up ? 'text-red-600' : 'text-sky-600'} ${className}`}
     >
-      <Icon width={14} height={14} strokeWidth={2.6} aria-hidden="true" />
+      <Icon width={13} height={13} strokeWidth={2.8} aria-hidden="true" />
       {up ? '+' : ''}
       {rate}%<span className="sr-only">{up ? ' 상승' : ' 하락'}</span>
     </span>
   );
 }
 
-function PriceRowItem({ row }: { row: PriceRow }) {
-  // 등급명이 품종명과 같은 경우가 있어(닭 → 육계(kg)) 중복 표기를 피한다.
-  const detail = [row.variety, row.grade !== row.variety ? row.grade : null]
-    .filter(Boolean)
-    .join(' · ');
+/** 최근 조사일들의 가격 흐름을 아주 작게 보여준다. */
+function Sparkline({ points, rate }: { points: PricePoint[]; rate: number | null }) {
+  if (points.length < 2) return null;
+  const values = points.map((p) => p.price);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const w = 56;
+  const h = 20;
+  const d = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * w;
+      const y = h - ((p.price - min) / span) * h;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const stroke = rate === null || rate === 0 ? '#94a3b8' : rate > 0 ? '#dc2626' : '#0284c7';
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      className="shrink-0 overflow-visible"
+      role="img"
+      aria-label={`최근 ${points.length}회 조사 가격 흐름`}
+    >
+      <path d={d} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PriceRowItem({ row, myIngredients }: { row: PriceRow; myIngredients: string[] }) {
+  const detail = [row.variety, row.grade !== row.variety ? row.grade : null].filter(Boolean).join(' · ');
+  const matched = matchingIngredients(row.name, myIngredients);
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-ink-100 py-3.5 last:border-b-0">
+    <li className="flex items-center gap-3 border-b border-ink-100 py-3 last:border-b-0">
+      <span className="shrink-0 text-xl" aria-hidden="true">
+        {row.emoji}
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[15px] font-bold text-ink-900">{row.label}</p>
-        <p className="mt-0.5 break-keep text-xs leading-relaxed text-ink-500">
-          {detail} · {formatYmd(row.date)} 조사 · 시장 {row.marketCount}곳 평균
+        <p className="flex flex-wrap items-center gap-1.5 text-[15px] font-bold text-ink-900">
+          {row.name}
+          {matched.length > 0 ? <Badge tone="brand">내 재료</Badge> : null}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-ink-500">
+          {detail}
+          {/* 조사 시장 수는 좁은 화면에서 줄바꿈을 만들어 넓은 화면에서만 보여준다. */}
+          <span className="hidden sm:inline"> · 시장 {row.marketCount}곳 평균</span>
         </p>
       </div>
-      <div className="text-right">
-        <p className="tnum text-[17px] font-extrabold text-ink-900">
+      {/* 추이 그래프는 좁은 화면에서 가격 칸을 밀어내므로 숨긴다. */}
+      <span className="hidden sm:block">
+        <Sparkline points={row.trend} rate={row.changeRate} />
+      </span>
+      <div className="w-[6.5rem] shrink-0 text-right sm:w-[7.5rem]">
+        <p className="tnum text-[15px] font-extrabold text-ink-900">
           {formatWon(row.price)}
-          <span className="ml-1 text-xs font-bold text-ink-500">/ {row.unitLabel}</span>
+          <span className="ml-0.5 block text-[11px] font-bold text-ink-500">/ {row.unitLabel}</span>
         </p>
-        <p className="mt-0.5">
-          <ChangeBadge rate={row.changeRate} />
-          {row.prevDate ? (
-            <span className="ml-1 text-xs text-ink-400">({formatYmd(row.prevDate)} 대비)</span>
-          ) : null}
-        </p>
+        <ChangeText rate={row.changeRate} className="mt-0.5 text-xs" />
       </div>
     </li>
   );
 }
 
-function LoadingState() {
+function HighlightCard({ row }: { row: PriceRow }) {
   return (
-    <div className="flex flex-col gap-4">
-      {[0, 1].map((block) => (
-        <Card key={block}>
-          <div className="h-4 w-24 animate-pulse rounded bg-ink-100" />
-          <div className="mt-4 flex flex-col gap-4">
-            {[0, 1, 2, 3].map((row) => (
-              <div key={row} className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <div className="h-3.5 w-20 animate-pulse rounded bg-ink-100" />
-                  <div className="mt-2 h-2.5 w-40 animate-pulse rounded bg-ink-50" />
-                </div>
-                <div className="h-4 w-24 animate-pulse rounded bg-ink-100" />
-              </div>
-            ))}
-          </div>
-        </Card>
-      ))}
+    <div className="rounded-xl border border-ink-200 bg-white p-4">
+      <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-700">
+        <span aria-hidden="true">{row.emoji}</span>
+        {row.name}
+      </p>
+      <p className="tnum mt-2 text-lg font-extrabold text-ink-900">{formatWon(row.price)}</p>
+      <p className="text-[11px] font-semibold text-ink-500">/ {row.unitLabel}</p>
+      <ChangeText rate={row.changeRate} className="mt-1.5 text-xs" />
+    </div>
+  );
+}
+
+function MoverList({ title, rows, emptyText }: { title: string; rows: PriceRow[]; emptyText: string }) {
+  return (
+    <Card>
+      <h2 className="text-[15px] font-bold text-ink-900">{title}</h2>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm text-ink-400">{emptyText}</p>
+      ) : (
+        <ul className="mt-2 flex flex-col divide-y divide-ink-100">
+          {rows.map((row) => (
+            <li key={row.key} className="flex items-center justify-between gap-3 py-2.5">
+              <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink-800">
+                <span aria-hidden="true">{row.emoji}</span>
+                <span className="truncate">{row.name}</span>
+              </span>
+              <ChangeText rate={row.changeRate} className="shrink-0 text-sm" />
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function RowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <div className="h-6 w-6 shrink-0 animate-pulse rounded bg-ink-100" />
+      <div className="flex-1">
+        <div className="h-3.5 w-24 animate-pulse rounded bg-ink-100" />
+        <div className="mt-2 h-2.5 w-36 animate-pulse rounded bg-ink-50" />
+      </div>
+      <div className="h-4 w-20 shrink-0 animate-pulse rounded bg-ink-100" />
     </div>
   );
 }
 
 export function MarketPricesClient() {
   const [channel, setChannel] = useState<Channel>('retail');
-  // 탭을 왔다 갔다 해도 다시 받아오지 않도록 채널별로 보관한다.
-  const [cache, setCache] = useState<Partial<Record<Channel, PricesPayload>>>({});
-  const [errors, setErrors] = useState<Partial<Record<Channel, string>>>({});
-  /** 다시 시도 버튼을 누르면 값을 바꿔 조회를 한 번 더 실행시킨다. */
+  const [region, setRegion] = useState('');
+  const [activeGroup, setActiveGroup] = useState<Group | '전체'>('전체');
+  const [query, setQuery] = useState('');
+
+  /** 캐시 키: `${channel}|${region}|${group}` */
+  const [loaded, setLoaded] = useState<Record<string, GroupPayload>>({});
+  const [failedGroups, setFailedGroups] = useState<Record<string, string>>({});
   const [reloadToken, setReloadToken] = useState(0);
 
-  const data = cache[channel];
-  const error = errors[channel] ?? null;
-  // 결과도 오류도 아직 없으면 불러오는 중이다.
-  // (effect 안에서 setState 를 바로 호출하면 렌더가 연쇄되어 React 19 에서 막는다)
-  const loading = !data && !error;
+  const { ingredients } = useData();
+  const myIngredientNames = useMemo(() => ingredients.map((i) => i.name), [ingredients]);
+
+  const scope = `${channel}|${region}`;
 
   useEffect(() => {
-    if (cache[channel] || errors[channel]) return;
     let cancelled = false;
 
-    fetch(`/api/market-prices?channel=${channel}`)
-      .then(async (res) => {
-        const body = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(body?.message ?? '시세를 불러오지 못했습니다.');
-        return body as PricesPayload;
-      })
-      .then((payload) => {
+    // 보고 있는 분류를 먼저, 나머지는 순서대로 뒤이어 받는다.
+    const order: Group[] = [
+      ...(activeGroup === '전체' ? [] : [activeGroup]),
+      ...MARKET_GROUPS.filter((g) => g !== activeGroup),
+    ];
+
+    (async () => {
+      for (const group of order) {
         if (cancelled) return;
-        setCache((prev) => ({ ...prev, [channel]: payload }));
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setErrors((prev) => ({
-          ...prev,
-          [channel]: err instanceof Error ? err.message : '시세를 불러오지 못했습니다.',
-        }));
-      });
+        const cacheKey = `${scope}|${group}`;
+        // 이미 받았거나 실패한 분류는 건너뛴다. (재시도는 reloadToken 으로 다시 들어온다)
+        if (loaded[cacheKey] || failedGroups[cacheKey]) continue;
+        try {
+          const res = await fetch(
+            `/api/market-prices?group=${encodeURIComponent(group)}&channel=${channel}${
+              region ? `&region=${region}` : ''
+            }`,
+          );
+          const body = await res.json().catch(() => null);
+          if (cancelled) return;
+          if (!res.ok) {
+            setFailedGroups((prev) => ({
+              ...prev,
+              [cacheKey]: body?.message ?? '시세를 불러오지 못했습니다.',
+            }));
+            continue;
+          }
+          setLoaded((prev) => ({ ...prev, [cacheKey]: body as GroupPayload }));
+        } catch {
+          if (cancelled) return;
+          setFailedGroups((prev) => ({ ...prev, [cacheKey]: '시세를 불러오지 못했습니다.' }));
+        }
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-    // cache/errors 를 의존성에 넣으면 갱신될 때마다 다시 실행된다. 채널과 재시도 신호만 본다.
+    // loaded/failedGroups 를 의존성에 넣으면 갱신될 때마다 다시 돌아 무한 반복이 된다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel, reloadToken]);
+  }, [scope, activeGroup, reloadToken]);
+
+  const allRows = useMemo(
+    () =>
+      MARKET_GROUPS.flatMap((g) => loaded[`${scope}|${g}`]?.rows ?? []),
+    [loaded, scope],
+  );
+
+  const loadedCount = MARKET_GROUPS.filter((g) => loaded[`${scope}|${g}`]).length;
+  const allLoaded = loadedCount === MARKET_GROUPS.length;
+  const activeLoaded = activeGroup === '전체' ? allRows.length > 0 : Boolean(loaded[`${scope}|${activeGroup}`]);
+  const activeError = activeGroup === '전체' ? null : (failedGroups[`${scope}|${activeGroup}`] ?? null);
+
+  const visibleRows = useMemo(() => {
+    const base = activeGroup === '전체' ? allRows : (loaded[`${scope}|${activeGroup}`]?.rows ?? []);
+    const q = query.trim();
+    if (!q) return base;
+    return base.filter((r) => r.name.includes(q) || r.variety.includes(q));
+  }, [activeGroup, allRows, loaded, scope, query]);
+
+  const highlights = useMemo(
+    () =>
+      HIGHLIGHT_KEYS.map((k) => allRows.find((r) => r.key === k)).filter(
+        (r): r is PriceRow => Boolean(r),
+      ),
+    [allRows],
+  );
+
+  const withChange = useMemo(
+    () => allRows.filter((r) => r.changeRate !== null && r.changeRate !== 0),
+    [allRows],
+  );
+  const risers = useMemo(
+    () => [...withChange].sort((a, b) => (b.changeRate ?? 0) - (a.changeRate ?? 0)).slice(0, 5),
+    [withChange],
+  );
+  const fallers = useMemo(
+    () => [...withChange].sort((a, b) => (a.changeRate ?? 0) - (b.changeRate ?? 0)).slice(0, 5),
+    [withChange],
+  );
+
+  const myRows = useMemo(() => {
+    if (myIngredientNames.length === 0) return [];
+    return allRows.filter((r) => matchingIngredients(r.name, myIngredientNames).length > 0);
+  }, [allRows, myIngredientNames]);
+
+  const latestDate = useMemo(
+    () => allRows.reduce<string | null>((max, r) => (!max || r.date > max ? r.date : max), null),
+    [allRows],
+  );
 
   const retry = () => {
-    setErrors((prev) => {
-      const next = { ...prev };
-      delete next[channel];
-      return next;
-    });
+    setFailedGroups({});
     setReloadToken((v) => v + 1);
   };
 
-  const groups = data ? [...new Set(data.rows.map((r) => r.group))] : [];
+  const tabs: (Group | '전체')[] = ['전체', ...MARKET_GROUPS];
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight text-ink-900 sm:text-3xl">
-          농산물 시세
-        </h1>
-        <p className="mt-2 text-[15px] leading-relaxed text-ink-600">
-          주요 식자재의 최근 조사 가격입니다. 재료 구매가격을 정하거나 원가가 왜 올랐는지 확인할 때
-          참고하세요.
-        </p>
+    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-ink-900 sm:text-3xl">
+            농산물 시세
+          </h1>
+          <p className="mt-1.5 text-[15px] text-ink-600">오늘의 식재료 가격을 한눈에 확인하세요.</p>
+        </div>
+        {latestDate ? (
+          <p className="tnum text-sm font-semibold text-ink-500">{formatYmd(latestDate)} 조사</p>
+        ) : null}
       </div>
 
-      <div className="mt-6 grid grid-cols-2 rounded-xl bg-ink-100 p-1" role="tablist">
-        {(['retail', 'wholesale'] as Channel[]).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={channel === value}
-            onClick={() => setChannel(value)}
-            className={`h-10 rounded-lg text-sm font-bold transition-colors ${
-              channel === value ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500'
-            }`}
-          >
-            {CHANNEL_LABEL[value]}
-          </button>
-        ))}
+      <div className="mt-5 flex flex-wrap gap-3">
+        <SelectField
+          label="지역"
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+          fieldClassName="w-[9rem]"
+        >
+          <option value="">전국</option>
+          {MARKET_REGIONS.map((r) => (
+            <option key={r.code} value={r.code}>
+              {r.name}
+            </option>
+          ))}
+        </SelectField>
+        <SelectField
+          label="가격 기준"
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as Channel)}
+          fieldClassName="w-[9rem]"
+        >
+          <option value="retail">소매가격</option>
+          <option value="wholesale">도매가격</option>
+        </SelectField>
       </div>
       <p className="mt-2 text-xs text-ink-500">
         {channel === 'retail'
@@ -208,81 +352,142 @@ export function MarketPricesClient() {
           : '도매가는 대량 구매 단위(예: 20kg) 기준입니다.'}
       </p>
 
-      <div className="mt-6">
-        {loading && !data ? <LoadingState /> : null}
-
-        {error && !data ? (
-          <Card className="text-center">
-            <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-2xl">
-              ⚠️
-            </span>
-            <p className="text-[15px] font-semibold text-ink-800">{error}</p>
-            <p className="mt-1 text-sm text-ink-500">
-              시세는 참고 정보이며, 원가 계산 기능은 그대로 사용할 수 있습니다.
-            </p>
-            <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
-              <Button onClick={retry}>다시 시도</Button>
-              <Link href="/calculator" className={buttonClass('secondary', 'md')}>
-                원가 계산하기
-              </Link>
-            </div>
-          </Card>
-        ) : null}
-
-        {data && data.rows.length === 0 ? (
-          <Card className="text-center">
-            <p className="text-[15px] font-semibold text-ink-800">
-              표시할 시세 자료가 없습니다.
-            </p>
-            <p className="mt-1 text-sm text-ink-500">
-              조사 자료가 아직 올라오지 않았을 수 있습니다. 잠시 후 다시 확인해주세요.
-            </p>
-          </Card>
-        ) : null}
-
-        {data && data.rows.length > 0 ? (
-          <div className="flex flex-col gap-4">
-            {groups.map((group) => (
-              <Card key={group} padded={false} className="overflow-hidden">
-                <div className="flex items-center justify-between gap-3 border-b border-ink-100 bg-ink-50/60 px-5 py-3">
-                  <h2 className="text-sm font-extrabold text-ink-800">{group}</h2>
-                  <Badge tone="neutral">{CHANNEL_LABEL[channel]}</Badge>
-                </div>
-                <ul className="px-5">
-                  {data.rows
-                    .filter((row) => row.group === group)
-                    .map((row) => (
-                      <PriceRowItem key={row.key} row={row} />
-                    ))}
-                </ul>
-              </Card>
+      {/* 오늘의 주요 시세 */}
+      {highlights.length > 0 ? (
+        <section className="mt-7">
+          <h2 className="text-[15px] font-extrabold text-ink-900">오늘의 주요 시세</h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {highlights.map((row) => (
+              <HighlightCard key={row.key} row={row} />
             ))}
           </div>
-        ) : null}
-      </div>
-
-      {data && data.rows.length > 0 ? (
-        <Card className="mt-6 bg-brand-50/50">
-          <h2 className="text-[15px] font-bold text-ink-900">내 재료 원가와 비교해보세요</h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-600">
-            내 재료에 저장한 구매가격과 위 시세를 비교하면 지금 사고 있는 가격이 적절한지 판단하는 데
-            도움이 됩니다.
-          </p>
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <Link href="/ingredients" className={buttonClass('primary', 'md', 'w-full sm:w-auto')}>
-              내 재료 보기
-            </Link>
-            <Link href="/calculator" className={buttonClass('secondary', 'md', 'w-full sm:w-auto')}>
-              원가 계산하기
-            </Link>
-          </div>
-        </Card>
+        </section>
       ) : null}
 
+      {/* 내 재료에 해당하는 시세 */}
+      {myRows.length > 0 ? (
+        <section className="mt-7">
+          <h2 className="text-[15px] font-extrabold text-ink-900">
+            내 재료에 등록된 품목 <span className="text-ink-400">({myRows.length})</span>
+          </h2>
+          <Card padded={false} className="mt-3 overflow-hidden">
+            <ul className="px-4 sm:px-5">
+              {myRows.map((row) => (
+                <PriceRowItem key={row.key} row={row} myIngredients={myIngredientNames} />
+              ))}
+            </ul>
+          </Card>
+          <p className="mt-2 text-xs text-ink-500">
+            이름이 비슷한 재료를 자동으로 찾아 보여줍니다. 실제 구매 품목과 다를 수 있습니다.
+          </p>
+        </section>
+      ) : null}
+
+      {/* 오른/내린 품목 */}
+      {withChange.length > 0 ? (
+        <section className="mt-7 grid gap-4 sm:grid-cols-2">
+          <MoverList title="📈 가격이 오른 품목" rows={risers} emptyText="오른 품목이 없습니다." />
+          <MoverList title="📉 가격이 내려간 품목" rows={fallers} emptyText="내려간 품목이 없습니다." />
+        </section>
+      ) : null}
+
+      {/* 분류 탭 + 검색 */}
+      <section className="mt-8">
+        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <div className="flex w-max gap-1.5 sm:w-auto sm:flex-wrap">
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveGroup(tab)}
+                aria-pressed={activeGroup === tab}
+                className={`h-9 shrink-0 whitespace-nowrap rounded-lg px-3.5 text-sm font-bold transition-colors ${
+                  activeGroup === tab
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-ink-100 text-ink-600 hover:bg-ink-200'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <TextField
+            label=""
+            placeholder="품목 검색 (예: 양파, 돼지)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            suffix=""
+            aria-label="품목 검색"
+          />
+        </div>
+
+        {!allLoaded ? (
+          <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-ink-400">
+            <IconSearch width={13} height={13} aria-hidden="true" />
+            시세를 불러오는 중입니다… ({loadedCount}/{MARKET_GROUPS.length} 분류)
+          </p>
+        ) : null}
+
+        <Card padded={false} className="mt-3 overflow-hidden">
+          <div className="px-4 sm:px-5">
+            {activeError && visibleRows.length === 0 ? (
+              <div className="py-10 text-center">
+                <p className="text-[15px] font-semibold text-ink-800">{activeError}</p>
+                <p className="mt-1 text-sm text-ink-500">
+                  시세는 참고 정보이며, 원가 계산 기능은 그대로 사용할 수 있습니다.
+                </p>
+                <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
+                  <Button onClick={retry}>다시 시도</Button>
+                  <Link href="/calculator" className={buttonClass('secondary', 'md')}>
+                    원가 계산하기
+                  </Link>
+                </div>
+              </div>
+            ) : !activeLoaded ? (
+              <div className="divide-y divide-ink-100">
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <RowSkeleton key={i} />
+                ))}
+              </div>
+            ) : visibleRows.length === 0 ? (
+              <p className="py-10 text-center text-[15px] text-ink-500">
+                {query ? `"${query}" 에 해당하는 품목이 없습니다.` : '표시할 시세 자료가 없습니다.'}
+              </p>
+            ) : (
+              <ul>
+                {visibleRows.map((row) => (
+                  <PriceRowItem key={row.key} row={row} myIngredients={myIngredientNames} />
+                ))}
+              </ul>
+            )}
+          </div>
+        </Card>
+      </section>
+
+      <Card className="mt-7 bg-brand-50/50">
+        <h2 className="text-[15px] font-bold text-ink-900">내 재료 원가와 비교해보세요</h2>
+        <p className="mt-1.5 text-sm leading-relaxed text-ink-600">
+          내 재료에 저장한 구매가격과 위 시세를 비교하면 지금 사고 있는 가격이 적절한지 판단하는 데
+          도움이 됩니다.
+        </p>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <Link href="/ingredients" className={buttonClass('primary', 'md', 'w-full sm:w-auto')}>
+            내 재료 보기
+          </Link>
+          <Link href="/calculator" className={buttonClass('secondary', 'md', 'w-full sm:w-auto')}>
+            원가 계산하기
+          </Link>
+        </div>
+      </Card>
+
       <p className="mt-6 break-keep text-xs leading-relaxed text-ink-400">
-        자료: 한국농수산식품유통공사(aT) 일별 도·소매 가격정보, 공공데이터포털 제공. 조사 시장들의
-        단순 평균이며 품목별로 조사일이 다를 수 있습니다. 지역·거래처·등급에 따라 실제 구매가격과 차이가
-        날 수 있어 참고용으로만 사용해주세요.
+        자료: 한국농수산식품유통공사(aT) 농산물유통정보(KAMIS) 일별 도·소매 가격정보, 공공데이터포털
+        제공. 조사 시장들의 단순 평균이며 품목별로 조사일이 다를 수 있습니다. 같은 품목 안에서도
+        품종·등급에 따라 가격이 크게 다르므로 대표 품종 하나를 기준으로 보여줍니다. 지역·거래처에 따라
+        실제 구매가격과 차이가 날 수 있어 참고용으로만 사용해주세요.
       </p>
     </div>
   );
