@@ -14,6 +14,7 @@ export const NAV_LINKS = [
   { href: '/preps', label: '프렙' },
   { href: '/supplies', label: '부자재' },
   { href: '/menus', label: '메뉴' },
+  { href: '/prices', label: '시세' },
 ];
 
 export function SiteHeader() {
@@ -29,12 +30,16 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-8">
           <Logo />
-          <nav className="hidden items-center gap-1 md:flex">
+          {/*
+            메뉴가 6개라 768px 에서는 오른쪽 로그인 영역과 부딛혀 "원가 계산" 이 두 줄로
+            접힌다. 그래서 데스크톱 메뉴는 1024px 부터만 보여주고, 그 아래는 서랍 메뉴를 쓴다.
+          */}
+          <nav className="hidden items-center gap-1 lg:flex">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
+                className={`whitespace-nowrap rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
                   isActive(link.href)
                     ? 'bg-brand-50 text-brand-700'
                     : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'
@@ -46,12 +51,12 @@ export function SiteHeader() {
           </nav>
         </div>
 
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="hidden items-center gap-2 lg:flex">
           {!ready ? null : user ? (
             <>
               <Link
                 href="/dashboard"
-                className={`rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
+                className={`whitespace-nowrap rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
                   isActive('/dashboard')
                     ? 'bg-brand-50 text-brand-700'
                     : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'
@@ -83,14 +88,14 @@ export function SiteHeader() {
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? '메뉴 닫기' : '메뉴 열기'}
           aria-expanded={open}
-          className="-mr-2 rounded-lg p-2 text-ink-700 transition-colors hover:bg-ink-100 md:hidden"
+          className="-mr-2 rounded-lg p-2 text-ink-700 transition-colors hover:bg-ink-100 lg:hidden"
         >
           {open ? <IconClose width={24} height={24} /> : <IconMenuBars width={24} height={24} />}
         </button>
       </div>
 
       {open ? (
-        <div className="border-t border-ink-100 bg-white md:hidden">
+        <div className="border-t border-ink-100 bg-white lg:hidden">
           <nav className="mx-auto flex max-w-6xl flex-col px-4 py-2 sm:px-6">
             {NAV_LINKS.map((link) => (
               <Link

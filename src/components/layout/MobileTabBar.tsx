@@ -26,7 +26,7 @@ export function MobileTabBar() {
   const tabs = [...TABS, { href: myHref, label: '내정보', Icon: IconUser }];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-200 bg-white/95 backdrop-blur md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-200 bg-white/95 backdrop-blur lg:hidden">
       <ul className="mx-auto flex max-w-lg items-stretch pb-[env(safe-area-inset-bottom)]">
         {tabs.map(({ href, label, Icon, exact }) => {
           const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);

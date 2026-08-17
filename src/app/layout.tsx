@@ -75,7 +75,8 @@ export default function RootLayout({
     <html lang="ko">
       <body className="min-h-dvh antialiased">
         <Providers>
-          <div className="flex min-h-dvh flex-col pb-16 md:pb-0">
+          {/* 하단 탭바(lg 아래에서만 보임) 높이만큼 아래 여백을 준다. */}
+          <div className="flex min-h-dvh flex-col pb-16 lg:pb-0">
             <SiteHeader />
             <main className="flex-1">{children}</main>
             <SiteFooter />
