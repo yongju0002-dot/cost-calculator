@@ -2,15 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
-import { IconArrowDown, IconArrowUp, IconSearch } from '@/components/ui/Icons';
+import { IconArrowDown, IconArrowUp, IconSearch, IconStar } from '@/components/ui/Icons';
 import { formatWon } from '@/lib/domain/money';
 import { MARKET_GROUPS, MARKET_REGIONS } from '@/lib/market/catalog';
-import { useData } from '@/lib/store/data';
-import { matchingIngredients } from './marketMatch';
+import { readFavorites, toggleFavorite } from './favorites';
 import { PriceHistoryModal, type HistoryTarget } from './PriceHistoryModal';
 
 /**
@@ -108,34 +106,53 @@ function Sparkline({ points, rate }: { points: PricePoint[]; rate: number | null
   );
 }
 
+function FavoriteButton({ favorited, onToggle, name }: { favorited: boolean; onToggle: () => void; name: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={favorited}
+      aria-label={favorited ? `${name} 즐겨찾기 해제` : `${name} 즐겨찾기에 추가`}
+      className="flex h-11 w-9 shrink-0 items-center justify-center text-ink-300 transition-colors hover:text-brand-400"
+    >
+      <IconStar
+        width={19}
+        height={19}
+        strokeWidth={1.8}
+        fill={favorited ? 'currentColor' : 'none'}
+        className={favorited ? 'text-brand-500' : ''}
+      />
+    </button>
+  );
+}
+
 function PriceRowItem({
   row,
-  myIngredients,
+  favorited,
+  onToggleFavorite,
   onSelect,
 }: {
   row: PriceRow;
-  myIngredients: string[];
+  favorited: boolean;
+  onToggleFavorite: () => void;
   onSelect: (target: HistoryTarget) => void;
 }) {
   const detail = [row.variety, row.grade !== row.variety ? row.grade : null].filter(Boolean).join(' · ');
-  const matched = matchingIngredients(row.name, myIngredients);
 
   return (
-    <li className="border-b border-ink-100 last:border-b-0">
+    <li className="flex items-center border-b border-ink-100 last:border-b-0">
+      <FavoriteButton favorited={favorited} onToggle={onToggleFavorite} name={row.name} />
       <button
         type="button"
         onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
-        className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-ink-50/70"
+        className="flex min-w-0 flex-1 items-center gap-3 py-3 pr-1 text-left transition-colors hover:bg-ink-50/70"
         aria-label={`${row.name} 가격 추이 보기`}
       >
         <span className="shrink-0 text-xl" aria-hidden="true">
           {row.emoji}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-1.5 text-[15px] font-bold text-ink-900">
-            {row.name}
-            {matched.length > 0 ? <Badge tone="brand">내 재료</Badge> : null}
-          </p>
+          <p className="text-[15px] font-bold text-ink-900">{row.name}</p>
           <p className="mt-0.5 truncate text-xs text-ink-500">
             {detail}
             {/* 조사 시장 수는 좁은 화면에서 줄바꿈을 만들어 넓은 화면에서만 보여준다. */}
@@ -248,9 +265,13 @@ export function MarketPricesClient() {
   const [reloadToken, setReloadToken] = useState(0);
   /** 가격 추이를 보고 있는 품목 */
   const [historyTarget, setHistoryTarget] = useState<HistoryTarget | null>(null);
+  // localStorage 는 렌더 중에 읽어도 안전하다(effect 안에서 setState 하는 게 아니라
+  // 초기값을 한 번 계산하는 것뿐이라 React 19 의 "effect 안 setState 금지" 와 무관하다).
+  const [favorites, setFavorites] = useState<string[]>(() => readFavorites());
 
-  const { ingredients } = useData();
-  const myIngredientNames = useMemo(() => ingredients.map((i) => i.name), [ingredients]);
+  const handleToggleFavorite = (key: string) => {
+    setFavorites((prev) => toggleFavorite(prev, key));
+  };
 
   const scope = `${channel}|${region}`;
 
@@ -318,6 +339,12 @@ export function MarketPricesClient() {
     return base.filter((r) => r.name.includes(q) || r.variety.includes(q));
   }, [activeGroup, allRows, loaded, scope, query]);
 
+  const favoriteRows = useMemo(() => {
+    if (favorites.length === 0) return [];
+    const order = new Map(favorites.map((k, i) => [k, i]));
+    return allRows.filter((r) => order.has(r.key)).sort((a, b) => (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
+  }, [allRows, favorites]);
+
   const highlights = useMemo(
     () =>
       // 품종이 여러 개인 품목(돼지 등)은 그중 조사 시장이 가장 많은 것 하나만 보여준다.
@@ -339,11 +366,6 @@ export function MarketPricesClient() {
     () => [...withChange].sort((a, b) => (a.changeRate ?? 0) - (b.changeRate ?? 0)).slice(0, 5),
     [withChange],
   );
-
-  const myRows = useMemo(() => {
-    if (myIngredientNames.length === 0) return [];
-    return allRows.filter((r) => matchingIngredients(r.name, myIngredientNames).length > 0);
-  }, [allRows, myIngredientNames]);
 
   const latestDate = useMemo(
     () => allRows.reduce<string | null>((max, r) => (!max || r.date > max ? r.date : max), null),
@@ -401,6 +423,29 @@ export function MarketPricesClient() {
           : '도매가는 대량 구매 단위(예: 20kg) 기준입니다.'}
       </p>
 
+      {/* 즐겨찾기 */}
+      {favoriteRows.length > 0 ? (
+        <section className="mt-7">
+          <h2 className="flex items-center gap-1.5 text-[15px] font-extrabold text-ink-900">
+            <IconStar width={16} height={16} fill="currentColor" className="text-brand-500" aria-hidden="true" />
+            즐겨찾기
+          </h2>
+          <Card padded={false} className="mt-3 overflow-hidden">
+            <ul className="px-4 sm:px-5">
+              {favoriteRows.map((row) => (
+                <PriceRowItem
+                  key={row.key}
+                  row={row}
+                  favorited
+                  onToggleFavorite={() => handleToggleFavorite(row.key)}
+                  onSelect={setHistoryTarget}
+                />
+              ))}
+            </ul>
+          </Card>
+        </section>
+      ) : null}
+
       {/* 오늘의 주요 시세 */}
       {highlights.length > 0 ? (
         <section className="mt-7">
@@ -410,30 +455,6 @@ export function MarketPricesClient() {
               <HighlightCard key={row.key} row={row} onSelect={setHistoryTarget} />
             ))}
           </div>
-        </section>
-      ) : null}
-
-      {/* 내 재료에 해당하는 시세 */}
-      {myRows.length > 0 ? (
-        <section className="mt-7">
-          <h2 className="text-[15px] font-extrabold text-ink-900">
-            내 재료에 등록된 품목 <span className="text-ink-400">({myRows.length})</span>
-          </h2>
-          <Card padded={false} className="mt-3 overflow-hidden">
-            <ul className="px-4 sm:px-5">
-              {myRows.map((row) => (
-                <PriceRowItem
-                  key={row.key}
-                  row={row}
-                  myIngredients={myIngredientNames}
-                  onSelect={setHistoryTarget}
-                />
-              ))}
-            </ul>
-          </Card>
-          <p className="mt-2 text-xs text-ink-500">
-            이름이 비슷한 재료를 자동으로 찾아 보여줍니다. 실제 구매 품목과 다를 수 있습니다.
-          </p>
         </section>
       ) : null}
 
@@ -514,11 +535,12 @@ export function MarketPricesClient() {
               <ul>
                 {visibleRows.map((row) => (
                   <PriceRowItem
-                  key={row.key}
-                  row={row}
-                  myIngredients={myIngredientNames}
-                  onSelect={setHistoryTarget}
-                />
+                    key={row.key}
+                    row={row}
+                    favorited={favorites.includes(row.key)}
+                    onToggleFavorite={() => handleToggleFavorite(row.key)}
+                    onSelect={setHistoryTarget}
+                  />
                 ))}
               </ul>
             )}
@@ -529,7 +551,7 @@ export function MarketPricesClient() {
       <Card className="mt-7 bg-brand-50/50">
         <h2 className="text-[15px] font-bold text-ink-900">내 재료 원가와 비교해보세요</h2>
         <p className="mt-1.5 text-sm leading-relaxed text-ink-600">
-          내 재료에 저장한 구매가격과 위 시세를 비교하면 지금 사고 있는 가격이 적절한지 판단하는 데
+          위 시세와 내 재료에 저장한 구매가격을 비교하면 지금 사고 있는 가격이 적절한지 판단하는 데
           도움이 됩니다.
         </p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">

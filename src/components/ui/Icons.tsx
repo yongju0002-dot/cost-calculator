@@ -116,6 +116,13 @@ export const IconCheck = (p: IconProps) => (
   </Base>
 );
 
+/** 별표(즐겨찾기). fill="currentColor" 를 넘기면 채워진 별로 보인다. */
+export const IconStar = (p: IconProps) => (
+  <Base strokeLinejoin="round" {...p}>
+    <path d="M12 3.5 14.7 9l6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3L9.3 9 12 3.5Z" />
+  </Base>
+);
+
 export const IconBolt = (p: IconProps) => (
   <Base {...p}>
     <path d="M13 3 5 13.5h6L11 21l8-10.5h-6L13 3Z" />
