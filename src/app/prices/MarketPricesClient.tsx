@@ -31,6 +31,7 @@ interface PricePoint {
 
 interface PriceRow {
   key: string;
+  itemKey: string;
   name: string;
   emoji: string;
   group: Group;
@@ -52,7 +53,7 @@ interface GroupPayload {
 }
 
 /** 첫 화면에서 눈에 띄게 보여줄 대표 품목 (없으면 조용히 건너뛴다) */
-const HIGHLIGHT_KEYS = ['200_245', '200_211', '200_246', '100_152', '500_4304_삼겹살', '500_9903'];
+const HIGHLIGHT_KEYS = ['200_245', '200_211', '200_246', '100_152', '500_4304', '500_9903'];
 
 function formatYmd(ymd: string): string {
   if (ymd.length !== 8) return ymd;
@@ -123,7 +124,7 @@ function PriceRowItem({
     <li className="border-b border-ink-100 last:border-b-0">
       <button
         type="button"
-        onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+        onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
         className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-ink-50/70"
         aria-label={`${row.name} 가격 추이 보기`}
       >
@@ -167,7 +168,7 @@ function HighlightCard({
   return (
     <button
       type="button"
-      onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+      onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
       className="rounded-xl border border-ink-200 bg-white p-4 text-left transition-colors hover:border-brand-300"
       aria-label={`${row.name} 가격 추이 보기`}
     >
@@ -204,7 +205,7 @@ function MoverList({
             <li key={row.key}>
               <button
                 type="button"
-                onClick={() => onSelect({ key: row.key, name: row.name, emoji: row.emoji })}
+                onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
                 className="flex w-full items-center justify-between gap-3 py-2.5 text-left transition-colors hover:text-brand-600"
                 aria-label={`${row.name} 가격 추이 보기`}
               >
@@ -319,7 +320,8 @@ export function MarketPricesClient() {
 
   const highlights = useMemo(
     () =>
-      HIGHLIGHT_KEYS.map((k) => allRows.find((r) => r.key === k)).filter(
+      // 품종이 여러 개인 품목(돼지 등)은 그중 조사 시장이 가장 많은 것 하나만 보여준다.
+      HIGHLIGHT_KEYS.map((k) => allRows.find((r) => r.itemKey === k)).filter(
         (r): r is PriceRow => Boolean(r),
       ),
     [allRows],

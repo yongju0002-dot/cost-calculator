@@ -15,8 +15,6 @@ export interface CatalogItem {
   ctgry: string;
   /** 품목코드 */
   item: string;
-  /** 지정하면 그 품종만 골라 쓴다 (돼지 삼겹살/앞다리처럼 부위를 나눠 보여줄 때) */
-  variety?: string;
   /** 소매 자료가 있는지 */
   retail: boolean;
   /** 도매 자료가 있는지 */
@@ -77,9 +75,7 @@ export const CATALOG: CatalogItem[] = [
   { key: '100_142', name: '팥', emoji: '🫘', group: '곡물', ctgry: '100', item: '142', retail: true, wholesale: true },
   { key: '500_9903', name: '계란', emoji: '🥚', group: '축산', ctgry: '500', item: '9903', retail: true, wholesale: false },
   { key: '500_9901', name: '닭', emoji: '🍗', group: '축산', ctgry: '500', item: '9901', retail: true, wholesale: false },
-  { key: '500_4304_목심', name: '돼지 목심', emoji: '🥓', group: '축산', ctgry: '500', item: '4304', variety: '목심', retail: true, wholesale: false },
-  { key: '500_4304_삼겹살', name: '돼지 삼겹살', emoji: '🥓', group: '축산', ctgry: '500', item: '4304', variety: '삼겹살', retail: true, wholesale: false },
-  { key: '500_4304_앞다리', name: '돼지 앞다리', emoji: '🥓', group: '축산', ctgry: '500', item: '4304', variety: '앞다리', retail: true, wholesale: false },
+  { key: '500_4304', name: '돼지', emoji: '🥓', group: '축산', ctgry: '500', item: '4304', retail: true, wholesale: false },
   { key: '500_4301', name: '소', emoji: '🥩', group: '축산', ctgry: '500', item: '4301', retail: true, wholesale: false },
   { key: '500_4402', name: '수입 돼지고기', emoji: '🥓', group: '축산', ctgry: '500', item: '4402', retail: true, wholesale: false },
   { key: '500_4401', name: '수입 소고기', emoji: '🥩', group: '축산', ctgry: '500', item: '4401', retail: true, wholesale: false },

@@ -55,13 +55,16 @@ export interface PricePoint {
 }
 
 export interface MarketPriceRow {
+  /** 화면 렌더링용 고유 키. 품종이 여러 개인 품목은 품종별로 다르다. */
   key: string;
+  /** 카탈로그 원본 키(=품목 단위). 가격 추이 조회 등 "이 품목"을 가리킬 때 쓴다. */
+  itemKey: string;
   name: string;
   emoji: string;
   group: MarketGroup;
   /** 품종명 (예: 삼겹살, 여름(고랭지)) */
   variety: string;
-  /** 등급명 (예: 상품, 1++등급) */
+  /** 등급명 (예: 상품, 1++등급) — 같은 품종·단위 안에서 가장 많이 보고된 등급 */
   grade: string;
   /** 가격 기준 단위 (예: 1kg, 100g, 1포기) */
   unitLabel: string;
@@ -253,13 +256,23 @@ async function fetchWindow(
 
 interface Group {
   variety: string;
+  /** 이 그룹에서 가장 많이 보고된 등급 (표시용) */
   grade: string;
   unitLabel: string;
   /** 조사일자 → 그 날 각 시장의 가격들 */
   byDate: Map<string, number[]>;
+  /** 등급별 보고 횟수 (대표 등급을 정하는 데만 쓴다) */
+  gradeCounts: Map<string, number>;
 }
 
-/** 품종·등급·단위별로, 다시 조사일별로 묶는다. */
+/**
+ * 품종·단위별로, 다시 조사일별로 묶는다.
+ *
+ * 등급(grd_nm)은 묶는 기준에서 뺐다. 등급은 같은 품종의 품질 등급이라 "삼겹살 1등급"과
+ * "삼겹살 상품"을 화면에서 굳이 나누지 않고 하나로 합쳐 보여준다. 대신 그 안에서 가장 많이
+ * 보고된 등급을 대표로 표시한다. (품종은 화면에 별도 줄로 보여줄 만큼 다른 상품이지만,
+ * 등급 차이까지 전부 줄로 쪼개면 소(쇠고기) 같은 품목이 지나치게 길어진다)
+ */
 function groupRows(rows: RawItem[], region: string | null): Group[] {
   const groups = new Map<string, Group>();
   for (const row of rows) {
@@ -267,15 +280,19 @@ function groupRows(rows: RawItem[], region: string | null): Group[] {
     const price = Number(row.exmn_dd_prc);
     if (!Number.isFinite(price) || price <= 0) continue;
     const unitLabel = `${row.unit_sz}${row.unit}`;
-    const key = `${row.vrty_nm}|${row.grd_nm}|${unitLabel}`;
+    const key = `${row.vrty_nm}|${unitLabel}`;
     let group = groups.get(key);
     if (!group) {
-      group = { variety: row.vrty_nm, grade: row.grd_nm, unitLabel, byDate: new Map() };
+      group = { variety: row.vrty_nm, grade: row.grd_nm, unitLabel, byDate: new Map(), gradeCounts: new Map() };
       groups.set(key, group);
     }
     const list = group.byDate.get(row.exmn_ymd);
     if (list) list.push(price);
     else group.byDate.set(row.exmn_ymd, [price]);
+
+    const gc = group.gradeCounts.get(row.grd_nm) ?? 0;
+    group.gradeCounts.set(row.grd_nm, gc + 1);
+    if (gc + 1 > (group.gradeCounts.get(group.grade) ?? 0)) group.grade = row.grd_nm;
   }
   return [...groups.values()];
 }
@@ -323,7 +340,7 @@ function pickCompareDate(dates: string[], latest: string): string | null {
   return older.find((d) => toTime(latest) - toTime(d) >= 5 * 86400000) ?? older[0];
 }
 
-function toRow(cfg: CatalogItem, group: Group): MarketPriceRow | null {
+function toRow(cfg: CatalogItem, group: Group, label: string | null): MarketPriceRow | null {
   const dates = datesDesc(group);
   const latest = dates[0];
   if (!latest) return null;
@@ -342,8 +359,10 @@ function toRow(cfg: CatalogItem, group: Group): MarketPriceRow | null {
     .filter((p) => p.price > 0);
 
   return {
-    key: cfg.key,
-    name: cfg.name,
+    // 품종이 하나뿐인 품목은 품목명 그대로, 여러 개면 "품목명 품종" 으로 구분한다.
+    key: label ? `${cfg.key}::${label}` : cfg.key,
+    itemKey: cfg.key,
+    name: label ? `${cfg.name} ${label}` : cfg.name,
     emoji: cfg.emoji,
     group: cfg.group,
     variety: group.variety,
@@ -358,6 +377,23 @@ function toRow(cfg: CatalogItem, group: Group): MarketPriceRow | null {
       prevPrice && prevPrice > 0 ? Math.round(((price - prevPrice) / prevPrice) * 1000) / 10 : null,
     trend,
   };
+}
+
+/**
+ * 품목 하나가 가진 모든 품종을 각각 줄로 만든다.
+ *
+ * 품종이 하나뿐이면 품목명 그대로 한 줄(예: "양파"), 여러 개면 품종마다 한 줄씩
+ * (예: "오이 가시계통", "오이 다다기계통", "오이 취청") 만든다. 최신 조사일이 있는
+ * 품종만 남기고, 조사 시장이 많은 순으로 정렬한다.
+ */
+function toRows(cfg: CatalogItem, groups: Group[]): MarketPriceRow[] {
+  const usable = groups.filter((g) => datesDesc(g).length > 0);
+  const multi = usable.length > 1;
+  const rows = usable
+    .map((g) => toRow(cfg, g, multi ? g.variety : null))
+    .filter((r): r is MarketPriceRow => r !== null);
+
+  return rows.sort((a, b) => b.date.localeCompare(a.date) || b.marketCount - a.marketCount);
 }
 
 /**
@@ -381,26 +417,11 @@ export async function fetchGroupPrices(
   // 이 분류에서, 해당 채널 자료가 있는 품목만 부른다.
   const configs = CATALOG.filter((c) => c.group === group && (channel === 'retail' ? c.retail : c.wholesale));
 
-  // 같은 (부류·품목) 을 여러 줄로 나눠 보여주는 경우(돼지 부위별)엔 조회는 한 번만 한다.
-  const byEndpoint = new Map<string, CatalogItem[]>();
-  for (const cfg of configs) {
-    const k = `${cfg.ctgry}-${cfg.item}`;
-    const list = byEndpoint.get(k);
-    if (list) list.push(cfg);
-    else byEndpoint.set(k, [cfg]);
-  }
-
   const results = await Promise.all(
-    [...byEndpoint.values()].map(async (group_) => {
+    configs.map(async (cfg) => {
       try {
-        const rows = await fetchWindow(group_[0], se, from, to, revalidate);
-        const groups = groupRows(rows, region);
-        return group_.flatMap((cfg) => {
-          const picked = pickGroup(groups, cfg.variety);
-          if (!picked) return [];
-          const row = toRow(cfg, picked);
-          return row ? [row] : [];
-        });
+        const rows = await fetchWindow(cfg, se, from, to, revalidate);
+        return toRows(cfg, groupRows(rows, region));
       } catch {
         return [];
       }
@@ -408,8 +429,9 @@ export async function fetchGroupPrices(
   );
 
   const rows = results.flat();
+  // 카탈로그 순서를 유지하되, 같은 품목 안 여러 품종은 toRows 가 정한 순서(조사 시장 많은 순)를 지킨다.
   const order = new Map(CATALOG.map((c, i) => [c.key, i]));
-  rows.sort((a, b) => (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
+  rows.sort((a, b) => (order.get(a.itemKey) ?? 0) - (order.get(b.itemKey) ?? 0));
 
   return {
     channel,
@@ -511,13 +533,20 @@ function pickComparable(groups: Group[], unitLabel: string, variety: string): Gr
   })[0];
 }
 
-/** 품목 하나의 기간별 가격 추이. */
+/**
+ * 품목 하나의 기간별 가격 추이.
+ *
+ * variety 를 지정하면 그 품종만 골라 추이를 만든다(한 품목에 품종이 여러 개일 때,
+ * 목록에서 고른 그 줄과 정확히 같은 걸 보여주기 위해서다). 지정하지 않으면
+ * 조사 시장이 가장 많은 품종을 대표로 쓴다.
+ */
 export async function fetchItemHistory(
   cfg: CatalogItem,
   channel: SalesChannel,
   region: string | null,
   period: HistoryPeriod,
   revalidate: number,
+  variety?: string,
 ): Promise<ItemHistoryResult> {
   if (!isMarketApiConfigured()) throw new Error('시세 기능이 아직 설정되지 않았습니다.');
 
@@ -538,7 +567,7 @@ export async function fetchItemHistory(
   // 기준은 가장 최근 창(마지막)에서 정한다. 그 창이 비면 뒤에서부터 찾는다.
   let reference: Group | null = null;
   for (let i = perWindow.length - 1; i >= 0 && !reference; i -= 1) {
-    reference = pickGroup(perWindow[i], cfg.variety);
+    reference = pickGroup(perWindow[i], variety);
   }
   if (!reference) {
     return {

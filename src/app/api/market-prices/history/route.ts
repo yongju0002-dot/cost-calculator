@@ -42,8 +42,12 @@ export async function GET(request: NextRequest) {
   const rawRegion = params.get('region');
   const region = rawRegion && MARKET_REGIONS.some((r) => r.code === rawRegion) ? rawRegion : null;
 
+  // 품목 하나에 품종이 여러 개일 때, 목록에서 고른 그 품종의 추이를 그대로 보여주기 위한 값.
+  // 없으면 조사 시장이 가장 많은 품종을 대표로 쓴다.
+  const variety = params.get('variety') ?? undefined;
+
   try {
-    const result = await fetchItemHistory(cfg, channel, region, period, REVALIDATE_SECONDS);
+    const result = await fetchItemHistory(cfg, channel, region, period, REVALIDATE_SECONDS, variety);
     return NextResponse.json(result, {
       headers: {
         'Cache-Control': `public, s-maxage=${REVALIDATE_SECONDS}, stale-while-revalidate=600`,

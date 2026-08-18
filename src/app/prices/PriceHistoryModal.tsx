@@ -35,9 +35,12 @@ interface HistoryPayload {
 }
 
 export interface HistoryTarget {
-  key: string;
+  /** 카탈로그 원본 키(=품목 단위, 품종 접미사 없음) */
+  itemKey: string;
   name: string;
   emoji: string;
+  /** 품종이 여러 개인 품목이면, 목록에서 고른 그 품종 */
+  variety?: string;
 }
 
 function formatDate(ymd: string): string {
@@ -139,11 +142,13 @@ export function PriceHistoryModal({
   onClose: () => void;
 }) {
   const [period, setPeriod] = useState<HistoryPeriod>('1m');
-  /** 캐시 키: `${key}|${channel}|${region}|${period}` */
+  /** 캐시 키: `${itemKey}|${variety}|${channel}|${region}|${period}` */
   const [cache, setCache] = useState<Record<string, HistoryPayload>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const cacheKey = target ? `${target.key}|${channel}|${region}|${period}` : '';
+  const cacheKey = target
+    ? `${target.itemKey}|${target.variety ?? ''}|${channel}|${region}|${period}`
+    : '';
   const data = cache[cacheKey];
   const error = errors[cacheKey];
   const loading = Boolean(target) && !data && !error;
@@ -154,9 +159,9 @@ export function PriceHistoryModal({
     let cancelled = false;
 
     fetch(
-      `/api/market-prices/history?key=${encodeURIComponent(target.key)}&period=${period}&channel=${channel}${
+      `/api/market-prices/history?key=${encodeURIComponent(target.itemKey)}&period=${period}&channel=${channel}${
         region ? `&region=${region}` : ''
-      }`,
+      }${target.variety ? `&variety=${encodeURIComponent(target.variety)}` : ''}`,
     )
       .then(async (res) => {
         const body = await res.json().catch(() => null);
