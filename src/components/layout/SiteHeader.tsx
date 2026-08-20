@@ -14,7 +14,6 @@ export const NAV_LINKS = [
   { href: '/preps', label: '프렙' },
   { href: '/supplies', label: '부자재' },
   { href: '/menus', label: '메뉴' },
-  { href: '/prices', label: '시세' },
 ];
 
 export function SiteHeader() {

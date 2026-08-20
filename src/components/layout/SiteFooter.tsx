@@ -10,7 +10,6 @@ const SERVICE_LINKS = [
   { href: '/preps', label: '프렙' },
   { href: '/supplies', label: '부자재' },
   { href: '/menus', label: '메뉴' },
-  { href: '/prices', label: '농산물 시세' },
   { href: '/guide', label: '사용 방법' },
 ];
 
