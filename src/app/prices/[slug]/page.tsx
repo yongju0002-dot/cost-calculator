@@ -21,17 +21,17 @@ import { PriceChartClient, type HistoryPayload } from '../PriceChartClient';
  * 데이터를 채워 넣으므로 뷰소스만으로도 실제 가격이 보인다.
  */
 
-// 6시간마다 다시 만든다. 시세 자체가 하루 1회 갱신되는 자료다.
+/**
+ * 6시간마다 다시 만든다. 시세 자체가 하루 1회 갱신되는 자료다.
+ *
+ * generateStaticParams 를 일부러 두지 않는다 — 두면 빌드 중에 97개 품목을 전부 그리는데,
+ * 인증키(DATA_GO_KR_SERVICE_KEY)는 서버 전용이라 Docker 빌드 단계에는 들어오지 않는다.
+ * 그러면 "시세 기능이 아직 준비되지 않았습니다" 상태가 HTML 에 그대로 구워져 배포된다.
+ * (실제로 그렇게 배포된 적이 있다) 대신 처음 들어온 요청 때 그리고 6시간 캐시한다.
+ * 카탈로그에 없는 슬러그는 아래에서 notFound() 로 걸러내므로 아무 URL 이나 색인되지 않는다.
+ */
 export const revalidate = 21600;
 const REVALIDATE_SECONDS = 21600;
-
-/** generateStaticParams 로 만든 슬러그가 아니면 그냥 404. 오타·구버전 링크가 별도
- * URL 로 색인되는 걸 막는다. */
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return CATALOG.map((item) => ({ slug: itemSlug(item) }));
-}
 
 /** /prices 목록 라우트와 정확히 같은 캐시를 쓴다 (서버 시작 시 미리 채워둔 값을 그대로 재사용). */
 async function loadGroupRows(item: (typeof CATALOG)[number], channel: 'retail' | 'wholesale') {

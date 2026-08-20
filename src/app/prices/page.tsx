@@ -11,6 +11,18 @@ export const metadata: Metadata = {
   alternates: { canonical: '/prices' },
 };
 
+/**
+ * 요청이 올 때마다 서버에서 그린다.
+ *
+ * 그냥 두면 Next 가 빌드 시점에 이 페이지를 미리 그려서 HTML 로 굳혀버리는데, 인증키
+ * (DATA_GO_KR_SERVICE_KEY)는 서버 전용이라 Docker 빌드 단계에는 들어오지 않는다. 그래서
+ * 가격이 하나도 없는 "불러오는 중" 상태가 그대로 구워져 배포된 적이 있다.
+ *
+ * 매번 그리지만 공공 API 를 매번 부르지는 않는다 — 아래 cachedValue 가 6시간 동안 값을
+ * 들고 있고, 서버가 뜰 때 instrumentation.ts 가 미리 채워둔다.
+ */
+export const dynamic = 'force-dynamic';
+
 const REVALIDATE_SECONDS = 21600;
 
 /**
