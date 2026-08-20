@@ -1,15 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
 import { formatWon } from '@/lib/domain/money';
 
 /**
- * 품목 하나의 기간별 가격 추이.
+ * 품목 하나의 기간별 가격 추이 그래프.
  *
- * 목록과 달리 사장님이 품목을 눌렀을 때만 /api/market-prices/history 를 부른다.
- * (기간이 길수록 조회량이 커지는 API 라, 미리 다 받아두지 않는다)
+ * 상세 페이지(/prices/[slug])에 박아 넣는 컴포넌트다. 서버가 미리 받아온 기간(보통
+ * 1개월)은 즉시 보여주고, 다른 기간을 누르면 그때 /api/market-prices/history 를 부른다.
+ * (기간이 길수록 조회량이 커지는 API 라 나머지 3개를 미리 다 받아두지 않는다)
  */
 
 export type HistoryPeriod = '7d' | '1m' | '3m' | '1y';
@@ -21,26 +21,16 @@ const PERIODS: { value: HistoryPeriod; label: string }[] = [
   { value: '1y', label: '1년' },
 ];
 
-interface HistoryPoint {
+export interface HistoryPoint {
   date: string;
   price: number;
   marketCount: number;
 }
 
-interface HistoryPayload {
-  name: string;
+export interface HistoryPayload {
   unitLabel: string;
   variety: string;
   points: HistoryPoint[];
-}
-
-export interface HistoryTarget {
-  /** 카탈로그 원본 키(=품목 단위, 품종 접미사 없음) */
-  itemKey: string;
-  name: string;
-  emoji: string;
-  /** 품종이 여러 개인 품목이면, 목록에서 고른 그 품종 */
-  variety?: string;
 }
 
 function formatDate(ymd: string): string {
@@ -114,7 +104,7 @@ function Chart({ points }: { points: HistoryPoint[] }) {
         <span className="tnum">{formatDate(last.date)}</span>
       </div>
 
-      {/* 그래프를 못 보는 경우에도 값을 읽을 수 있게 표로 함께 제공한다. */}
+      {/* 그래프를 못 보는 경우(스크린리더 등)에도 값을 읽을 수 있게 표로 함께 제공한다. */}
       <table className="sr-only">
         <caption>조사일별 가격</caption>
         <tbody>
@@ -130,38 +120,43 @@ function Chart({ points }: { points: HistoryPoint[] }) {
   );
 }
 
-export function PriceHistoryModal({
-  target,
+export function PriceChartClient({
+  itemKey,
+  variety,
   channel,
   region,
-  onClose,
+  initialPeriod,
+  initialData,
 }: {
-  target: HistoryTarget | null;
+  itemKey: string;
+  variety?: string;
   channel: 'retail' | 'wholesale';
   region: string;
-  onClose: () => void;
+  initialPeriod: HistoryPeriod;
+  /** 서버가 미리 받아온 값. null 이면 그 기간도 클릭해야 불러온다. */
+  initialData: HistoryPayload | null;
 }) {
-  const [period, setPeriod] = useState<HistoryPeriod>('1m');
-  /** 캐시 키: `${itemKey}|${variety}|${channel}|${region}|${period}` */
-  const [cache, setCache] = useState<Record<string, HistoryPayload>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [period, setPeriod] = useState<HistoryPeriod>(initialPeriod);
+  const [cache, setCache] = useState<Record<HistoryPeriod, HistoryPayload | undefined>>(() => ({
+    '7d': undefined,
+    '1m': undefined,
+    '3m': undefined,
+    '1y': undefined,
+    [initialPeriod]: initialData ?? undefined,
+  }));
+  const [errors, setErrors] = useState<Partial<Record<HistoryPeriod, string>>>({});
+  const [pending, setPending] = useState(false);
 
-  const cacheKey = target
-    ? `${target.itemKey}|${target.variety ?? ''}|${channel}|${region}|${period}`
-    : '';
-  const data = cache[cacheKey];
-  const error = errors[cacheKey];
-  const loading = Boolean(target) && !data && !error;
+  const data = cache[period];
+  const error = errors[period];
 
-  useEffect(() => {
-    if (!target) return;
-    if (cache[cacheKey] || errors[cacheKey]) return;
-    let cancelled = false;
-
+  const load = (target: HistoryPeriod) => {
+    if (cache[target] || pending) return;
+    setPending(true);
     fetch(
-      `/api/market-prices/history?key=${encodeURIComponent(target.itemKey)}&period=${period}&channel=${channel}${
+      `/api/market-prices/history?key=${encodeURIComponent(itemKey)}&period=${target}&channel=${channel}${
         region ? `&region=${region}` : ''
-      }${target.variety ? `&variety=${encodeURIComponent(target.variety)}` : ''}`,
+      }${variety ? `&variety=${encodeURIComponent(variety)}` : ''}`,
     )
       .then(async (res) => {
         const body = await res.json().catch(() => null);
@@ -169,25 +164,21 @@ export function PriceHistoryModal({
         return body as HistoryPayload;
       })
       .then((payload) => {
-        if (!cancelled) setCache((prev) => ({ ...prev, [cacheKey]: payload }));
+        setCache((prev) => ({ ...prev, [target]: payload }));
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setErrors((prev) => ({
-            ...prev,
-            [cacheKey]: err instanceof Error ? err.message : '가격 추이를 불러오지 못했습니다.',
-          }));
-        }
-      });
+        setErrors((prev) => ({
+          ...prev,
+          [target]: err instanceof Error ? err.message : '가격 추이를 불러오지 못했습니다.',
+        }));
+      })
+      .finally(() => setPending(false));
+  };
 
-    return () => {
-      cancelled = true;
-    };
-    // cache/errors 를 의존성에 넣으면 갱신될 때마다 다시 돌아 무한 반복이 된다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey, target, period, channel, region]);
-
-  if (!target) return null;
+  const selectPeriod = (target: HistoryPeriod) => {
+    setPeriod(target);
+    load(target);
+  };
 
   const points = data?.points ?? [];
   const last = points[points.length - 1];
@@ -198,16 +189,7 @@ export function PriceHistoryModal({
       : null;
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`${target.emoji} ${target.name}`}
-      description={
-        data && data.unitLabel
-          ? `${data.variety} · ${data.unitLabel} 기준 · ${channel === 'retail' ? '소매' : '도매'}`
-          : undefined
-      }
-    >
+    <div>
       <div className="grid grid-cols-4 gap-1.5" role="tablist">
         {PERIODS.map((p) => (
           <button
@@ -215,7 +197,7 @@ export function PriceHistoryModal({
             type="button"
             role="tab"
             aria-selected={period === p.value}
-            onClick={() => setPeriod(p.value)}
+            onClick={() => selectPeriod(p.value)}
             className={`h-9 rounded-lg text-sm font-bold transition-colors ${
               period === p.value ? 'bg-brand-500 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200'
             }`}
@@ -226,7 +208,7 @@ export function PriceHistoryModal({
       </div>
 
       <div className="mt-5">
-        {loading ? (
+        {!data && !error ? (
           <div className="h-[13rem] animate-pulse rounded-xl bg-ink-100" />
         ) : error ? (
           <div className="py-8 text-center">
@@ -237,7 +219,7 @@ export function PriceHistoryModal({
               onClick={() =>
                 setErrors((prev) => {
                   const next = { ...prev };
-                  delete next[cacheKey];
+                  delete next[period];
                   return next;
                 })
               }
@@ -246,18 +228,14 @@ export function PriceHistoryModal({
             </Button>
           </div>
         ) : points.length === 0 ? (
-          <p className="py-10 text-center text-[15px] text-ink-500">
-            이 기간에는 조사 자료가 없습니다.
-          </p>
+          <p className="py-10 text-center text-[15px] text-ink-500">이 기간에는 조사 자료가 없습니다.</p>
         ) : points.length === 1 ? (
           <div className="py-8 text-center">
             <p className="tnum text-2xl font-extrabold text-ink-900">{formatWon(points[0].price)}</p>
             <p className="mt-1 text-sm text-ink-500">
               {formatDate(points[0].date)} 조사 · 시장 {points[0].marketCount}곳 평균
             </p>
-            <p className="mt-3 text-xs text-ink-400">
-              이 기간에 조사일이 하나뿐이라 그래프를 그릴 수 없습니다.
-            </p>
+            <p className="mt-3 text-xs text-ink-400">이 기간에 조사일이 하나뿐이라 그래프를 그릴 수 없습니다.</p>
           </div>
         ) : (
           <>
@@ -278,10 +256,7 @@ export function PriceHistoryModal({
                   }`}
                 >
                   {change > 0 ? '▲ +' : change < 0 ? '▼ ' : ''}
-                  {change}%
-                  <span className="ml-1 font-medium text-ink-400">
-                    ({formatMd(first.date)} 대비)
-                  </span>
+                  {change}%<span className="ml-1 font-medium text-ink-400">({formatMd(first.date)} 대비)</span>
                 </p>
               ) : null}
             </div>
@@ -291,12 +266,12 @@ export function PriceHistoryModal({
             </div>
 
             <p className="mt-4 break-keep text-xs leading-relaxed text-ink-400">
-              조사 시장들의 단순 평균입니다. 3개월·1년은 기간 안에서 일정 간격으로 뽑은 조사일을
-              이어 그린 것이라 모든 날짜가 표시되지는 않습니다.
+              조사 시장들의 단순 평균입니다. 3개월·1년은 기간 안에서 일정 간격으로 뽑은 조사일을 이어
+              그린 것이라 모든 날짜가 표시되지는 않습니다.
             </p>
           </>
         )}
       </div>
-    </Modal>
+    </div>
   );
 }

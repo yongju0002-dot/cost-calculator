@@ -7,16 +7,18 @@ import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { IconArrowDown, IconArrowUp, IconSearch, IconStar } from '@/components/ui/Icons';
 import { formatWon } from '@/lib/domain/money';
-import { MARKET_GROUPS, MARKET_REGIONS } from '@/lib/market/catalog';
+import { CATALOG, MARKET_GROUPS, MARKET_REGIONS } from '@/lib/market/catalog';
+import { itemSlug } from '@/lib/market/slug';
 import { readFavorites, toggleFavorite } from './favorites';
-import { PriceHistoryModal, type HistoryTarget } from './PriceHistoryModal';
 
 /**
  * 농산물 시세 화면.
  *
- * 실제 데이터는 서버 라우트(/api/market-prices)가 공공데이터포털에서 받아온다.
- * 그 API 는 품목코드가 필수라 품목당 한 번씩 불러야 해서, 분류(채소/과일/…)별로 나눠
- * 받고 먼저 도착한 분류부터 화면에 채운다.
+ * 기본값(소매·전국)은 서버가 미리 받아온 데이터를 그대로 받아 처음부터 채워진 채로
+ * 그려진다 — 크롤러가 받는 최초 HTML 에도 실제 가격이 있어야 검색에 잡히기 때문이다.
+ * 지역/채널을 바꾸면 그때부터는 /api/market-prices 를 클라이언트에서 불러온다.
+ *
+ * 품목을 누르면 각 품목의 색인 가능한 개별 페이지(/prices/[슬러그])로 이동한다.
  */
 
 type Channel = 'retail' | 'wholesale';
@@ -52,6 +54,19 @@ interface GroupPayload {
 
 /** 첫 화면에서 눈에 띄게 보여줄 대표 품목 (없으면 조용히 건너뛴다) */
 const HIGHLIGHT_KEYS = ['200_245', '200_211', '200_246', '100_152', '500_4304', '500_9903'];
+
+/** 품목 키 → 개별 페이지 슬러그. 한 번만 만들어 재사용한다. */
+const SLUG_BY_ITEM_KEY = new Map(CATALOG.map((c) => [c.key, itemSlug(c)]));
+
+function itemHref(itemKey: string): string {
+  const slug = SLUG_BY_ITEM_KEY.get(itemKey);
+  return slug ? `/prices/${slug}` : '/prices';
+}
+
+/** 기본값(소매·전국) 캐시 키. page.tsx 가 서버에서 미리 채워 넘겨주는 값과 짝을 맞춘다. */
+function defaultCacheKey(group: Group): string {
+  return `retail||${group}`;
+}
 
 function formatYmd(ymd: string): string {
   if (ymd.length !== 8) return ymd;
@@ -130,23 +145,19 @@ function PriceRowItem({
   row,
   favorited,
   onToggleFavorite,
-  onSelect,
 }: {
   row: PriceRow;
   favorited: boolean;
   onToggleFavorite: () => void;
-  onSelect: (target: HistoryTarget) => void;
 }) {
   const detail = [row.variety, row.grade !== row.variety ? row.grade : null].filter(Boolean).join(' · ');
 
   return (
     <li className="flex items-center border-b border-ink-100 last:border-b-0">
       <FavoriteButton favorited={favorited} onToggle={onToggleFavorite} name={row.name} />
-      <button
-        type="button"
-        onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
+      <Link
+        href={itemHref(row.itemKey)}
         className="flex min-w-0 flex-1 items-center gap-3 py-3 pr-1 text-left transition-colors hover:bg-ink-50/70"
-        aria-label={`${row.name} 가격 추이 보기`}
       >
         <span className="shrink-0 text-xl" aria-hidden="true">
           {row.emoji}
@@ -170,24 +181,16 @@ function PriceRowItem({
           </p>
           <ChangeText rate={row.changeRate} className="mt-0.5 text-xs" />
         </div>
-      </button>
+      </Link>
     </li>
   );
 }
 
-function HighlightCard({
-  row,
-  onSelect,
-}: {
-  row: PriceRow;
-  onSelect: (target: HistoryTarget) => void;
-}) {
+function HighlightCard({ row }: { row: PriceRow }) {
   return (
-    <button
-      type="button"
-      onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
+    <Link
+      href={itemHref(row.itemKey)}
       className="rounded-xl border border-ink-200 bg-white p-4 text-left transition-colors hover:border-brand-300"
-      aria-label={`${row.name} 가격 추이 보기`}
     >
       <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-700">
         <span aria-hidden="true">{row.emoji}</span>
@@ -196,21 +199,11 @@ function HighlightCard({
       <p className="tnum mt-2 text-lg font-extrabold text-ink-900">{formatWon(row.price)}</p>
       <p className="text-[11px] font-semibold text-ink-500">/ {row.unitLabel}</p>
       <ChangeText rate={row.changeRate} className="mt-1.5 text-xs" />
-    </button>
+    </Link>
   );
 }
 
-function MoverList({
-  title,
-  rows,
-  emptyText,
-  onSelect,
-}: {
-  title: string;
-  rows: PriceRow[];
-  emptyText: string;
-  onSelect: (target: HistoryTarget) => void;
-}) {
+function MoverList({ title, rows, emptyText }: { title: string; rows: PriceRow[]; emptyText: string }) {
   return (
     <Card>
       <h2 className="text-[15px] font-bold text-ink-900">{title}</h2>
@@ -220,18 +213,16 @@ function MoverList({
         <ul className="mt-2 flex flex-col divide-y divide-ink-100">
           {rows.map((row) => (
             <li key={row.key}>
-              <button
-                type="button"
-                onClick={() => onSelect({ itemKey: row.itemKey, name: row.name, emoji: row.emoji, variety: row.variety })}
+              <Link
+                href={itemHref(row.itemKey)}
                 className="flex w-full items-center justify-between gap-3 py-2.5 text-left transition-colors hover:text-brand-600"
-                aria-label={`${row.name} 가격 추이 보기`}
               >
                 <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink-800">
                   <span aria-hidden="true">{row.emoji}</span>
                   <span className="truncate">{row.name}</span>
                 </span>
                 <ChangeText rate={row.changeRate} className="shrink-0 text-sm" />
-              </button>
+              </Link>
             </li>
           ))}
         </ul>
@@ -253,18 +244,28 @@ function RowSkeleton() {
   );
 }
 
-export function MarketPricesClient() {
+export function MarketPricesClient({
+  initialGroups,
+}: {
+  /** 소매·전국 기준으로 서버가 미리 받아온 값. 분류별로 없을 수도 있다(조회 실패 등). */
+  initialGroups: Partial<Record<Group, GroupPayload>>;
+}) {
   const [channel, setChannel] = useState<Channel>('retail');
   const [region, setRegion] = useState('');
   const [activeGroup, setActiveGroup] = useState<Group | '전체'>('전체');
   const [query, setQuery] = useState('');
 
   /** 캐시 키: `${channel}|${region}|${group}` */
-  const [loaded, setLoaded] = useState<Record<string, GroupPayload>>({});
+  const [loaded, setLoaded] = useState<Record<string, GroupPayload>>(() => {
+    const seeded: Record<string, GroupPayload> = {};
+    for (const group of MARKET_GROUPS) {
+      const payload = initialGroups[group];
+      if (payload) seeded[defaultCacheKey(group)] = payload;
+    }
+    return seeded;
+  });
   const [failedGroups, setFailedGroups] = useState<Record<string, string>>({});
   const [reloadToken, setReloadToken] = useState(0);
-  /** 가격 추이를 보고 있는 품목 */
-  const [historyTarget, setHistoryTarget] = useState<HistoryTarget | null>(null);
   // localStorage 는 렌더 중에 읽어도 안전하다(effect 안에서 setState 하는 게 아니라
   // 초기값을 한 번 계산하는 것뿐이라 React 19 의 "effect 안 setState 금지" 와 무관하다).
   const [favorites, setFavorites] = useState<string[]>(() => readFavorites());
@@ -280,7 +281,8 @@ export function MarketPricesClient() {
 
     const load = async (group: Group) => {
       const cacheKey = `${scope}|${group}`;
-      // 이미 받았거나 실패한 분류는 건너뛴다. (재시도는 reloadToken 으로 다시 들어온다)
+      // 이미 받았거나(서버가 미리 채워준 기본값 포함) 실패한 분류는 건너뛴다.
+      // (재시도는 reloadToken 으로 다시 들어온다)
       if (loaded[cacheKey] || failedGroups[cacheKey]) return;
       try {
         const res = await fetch(
@@ -438,7 +440,6 @@ export function MarketPricesClient() {
                   row={row}
                   favorited
                   onToggleFavorite={() => handleToggleFavorite(row.key)}
-                  onSelect={setHistoryTarget}
                 />
               ))}
             </ul>
@@ -452,7 +453,7 @@ export function MarketPricesClient() {
           <h2 className="text-[15px] font-extrabold text-ink-900">오늘의 주요 시세</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {highlights.map((row) => (
-              <HighlightCard key={row.key} row={row} onSelect={setHistoryTarget} />
+              <HighlightCard key={row.key} row={row} />
             ))}
           </div>
         </section>
@@ -461,8 +462,8 @@ export function MarketPricesClient() {
       {/* 오른/내린 품목 */}
       {withChange.length > 0 ? (
         <section className="mt-7 grid gap-4 sm:grid-cols-2">
-          <MoverList title="📈 가격이 오른 품목" rows={risers} emptyText="오른 품목이 없습니다." onSelect={setHistoryTarget} />
-          <MoverList title="📉 가격이 내려간 품목" rows={fallers} emptyText="내려간 품목이 없습니다." onSelect={setHistoryTarget} />
+          <MoverList title="📈 가격이 오른 품목" rows={risers} emptyText="오른 품목이 없습니다." />
+          <MoverList title="📉 가격이 내려간 품목" rows={fallers} emptyText="내려간 품목이 없습니다." />
         </section>
       ) : null}
 
@@ -539,7 +540,6 @@ export function MarketPricesClient() {
                     row={row}
                     favorited={favorites.includes(row.key)}
                     onToggleFavorite={() => handleToggleFavorite(row.key)}
-                    onSelect={setHistoryTarget}
                   />
                 ))}
               </ul>
@@ -570,13 +570,6 @@ export function MarketPricesClient() {
         품종·등급에 따라 가격이 크게 다르므로 대표 품종 하나를 기준으로 보여줍니다. 지역·거래처에 따라
         실제 구매가격과 차이가 날 수 있어 참고용으로만 사용해주세요.
       </p>
-
-      <PriceHistoryModal
-        target={historyTarget}
-        channel={channel}
-        region={region}
-        onClose={() => setHistoryTarget(null)}
-      />
     </div>
   );
 }
