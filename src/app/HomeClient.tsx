@@ -51,6 +51,7 @@ const FEATURE_GRID = [
   { emoji: '📦', title: '부자재 관리', desc: '용기·포장재 등 부자재 원가를 관리합니다.' },
   { emoji: '📈', title: '매입가 관리', desc: '매입가 이력을 기록하고 최신·평균 단가를 적용합니다.' },
   { emoji: '📋', title: '대량 등록', desc: '붙여넣기나 엑셀로 재료·부자재를 한 번에 등록합니다.' },
+  { emoji: '🧾', title: '손익분기점', desc: '임대료·인건비를 넣어 얼마를 팔아야 본전인지 계산합니다.' },
 ];
 
 const PRINCIPLES = [

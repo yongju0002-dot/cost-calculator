@@ -14,6 +14,7 @@ export const NAV_LINKS = [
   { href: '/preps', label: '프렙' },
   { href: '/supplies', label: '부자재' },
   { href: '/menus', label: '메뉴' },
+  { href: '/breakeven', label: '손익분기' },
 ];
 
 export function SiteHeader() {

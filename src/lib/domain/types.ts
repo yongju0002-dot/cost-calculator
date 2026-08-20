@@ -161,6 +161,28 @@ export interface Menu {
   updatedAt: string;
 }
 
+/** 고정비 분류. 화면에서 묶어 보여주는 용도라 값 자체가 라벨이다. */
+export const FIXED_COST_CATEGORIES = ['임대료', '인건비', '공과금', '기타'] as const;
+export type FixedCostCategory = (typeof FIXED_COST_CATEGORIES)[number];
+
+/**
+ * 매달 고정으로 나가는 비용 (임대료·인건비·공과금 등).
+ *
+ * 메뉴 원가(재료비)와 달리 파는 양과 무관하게 나가는 돈이라, 손익분기점을
+ * 구할 때만 쓴다. 메뉴별 원가·원가율 계산에는 절대 섞지 않는다.
+ */
+export interface FixedCost {
+  id: string;
+  ownerId: string;
+  name: string;
+  /** 한 달 금액 (원) */
+  amount: number;
+  category: FixedCostCategory;
+  memo?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppData {
   version: number;
   ingredients: Ingredient[];
@@ -171,6 +193,9 @@ export interface AppData {
   preps?: Prep[];
   supplies?: Supply[];
   purchases?: PurchaseRecord[];
+  fixedCosts?: FixedCost[];
+  /** 한 달 영업일수. 손익분기 매출을 하루 단위로 나눌 때 쓴다. */
+  operatingDays?: number;
 }
 
 export interface Account {

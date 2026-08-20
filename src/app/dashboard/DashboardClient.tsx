@@ -250,13 +250,20 @@ export function DashboardClient() {
             <Link href="/menus" className={buttonClass('secondary', 'md')}>
               내 메뉴 관리
             </Link>
+            <Link href="/breakeven" className={buttonClass('secondary', 'md')}>
+              손익분기점 보기
+            </Link>
           </div>
         </>
       )}
 
       <p className="mt-8 text-xs leading-relaxed text-ink-400">
-        원가율은 재료비만 반영한 값으로, 인건비·임대료·공과금 등은 포함되어 있지 않습니다. 업종과 매장 상황에
-        따라 적정 수준은 달라질 수 있으니 참고용으로 활용해주세요.
+        원가율은 재료비만 반영한 값으로, 인건비·임대료·공과금 등은 포함되어 있지 않습니다. 이런 고정비까지
+        넣어 얼마를 팔아야 본전인지 보려면{' '}
+        <Link href="/breakeven" className="font-semibold text-brand-600 hover:underline">
+          손익분기점
+        </Link>{' '}
+        화면을 이용해주세요. 업종과 매장 상황에 따라 적정 수준은 달라질 수 있으니 참고용으로 활용해주세요.
       </p>
     </div>
   );

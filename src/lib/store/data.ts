@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useAuth } from '@/lib/auth/auth';
+import { DEFAULT_OPERATING_DAYS, normalizeOperatingDays } from '@/lib/domain/breakeven';
 import { mergeCategories } from '@/lib/domain/categories';
 import {
   applyPricingMode,
@@ -15,6 +16,8 @@ import { buildMenuView, type MenuView } from '@/lib/domain/menuView';
 import { createSampleData } from '@/lib/domain/sample';
 import type {
   AppData,
+  FixedCost,
+  FixedCostCategory,
   Ingredient,
   Menu,
   Prep,
@@ -47,6 +50,8 @@ const EMPTY_DATA: AppData = {
   preps: [],
   supplies: [],
   purchases: [],
+  fixedCosts: [],
+  operatingDays: DEFAULT_OPERATING_DAYS,
 };
 
 export interface IngredientInput {
@@ -158,6 +163,12 @@ function normalizeData(raw: unknown): AppData {
     purchases: Array.isArray(data.purchases)
       ? data.purchases.filter((p) => p && typeof p.id === 'string' && isUnit(p.unit))
       : [],
+    fixedCosts: Array.isArray(data.fixedCosts)
+      ? data.fixedCosts.filter(
+          (c) => c && typeof c.id === 'string' && typeof c.amount === 'number',
+        )
+      : [],
+    operatingDays: normalizeOperatingDays(data.operatingDays),
   };
 }
 
@@ -894,6 +905,63 @@ export function addSuppliesBulk(inputs: SupplyInput[]): Supply[] {
   return created;
 }
 
+// ─────────────────────────────────────────────────────────
+// 고정비 (손익분기점 계산에만 쓴다. 메뉴 원가에는 섞지 않는다)
+// ─────────────────────────────────────────────────────────
+
+export interface FixedCostInput {
+  name: string;
+  amount: number;
+  category: FixedCostCategory;
+  memo?: string;
+}
+
+export function addFixedCost(input: FixedCostInput): FixedCost {
+  const at = nowIso();
+  const fixedCost: FixedCost = {
+    id: createId('fix'),
+    ownerId: store.getSnapshot().ownerId,
+    name: input.name.trim(),
+    amount: input.amount,
+    category: input.category,
+    memo: input.memo?.trim() || undefined,
+    createdAt: at,
+    updatedAt: at,
+  };
+  mutate((data) => ({ ...data, fixedCosts: [...(data.fixedCosts ?? []), fixedCost] }));
+  return fixedCost;
+}
+
+export function updateFixedCost(id: string, input: FixedCostInput): void {
+  mutate((data) => ({
+    ...data,
+    fixedCosts: (data.fixedCosts ?? []).map((c) =>
+      c.id === id
+        ? {
+            ...c,
+            name: input.name.trim(),
+            amount: input.amount,
+            category: input.category,
+            memo: input.memo?.trim() || undefined,
+            updatedAt: nowIso(),
+          }
+        : c,
+    ),
+  }));
+}
+
+export function removeFixedCost(id: string): void {
+  mutate((data) => ({
+    ...data,
+    fixedCosts: (data.fixedCosts ?? []).filter((c) => c.id !== id),
+  }));
+}
+
+/** 한 달 영업일수. 범위를 벗어난 값은 보정해서 저장한다. */
+export function setOperatingDays(days: number): void {
+  mutate((data) => ({ ...data, operatingDays: normalizeOperatingDays(days) }));
+}
+
 export function addCategory(name: string): void {
   const trimmed = name.trim();
   if (!trimmed) return;
@@ -929,6 +997,9 @@ export interface UseDataResult {
   preps: Prep[];
   supplies: Supply[];
   purchases: PurchaseRecord[];
+  fixedCosts: FixedCost[];
+  /** 한 달 영업일수 (손익분기 계산용) */
+  operatingDays: number;
   menuViews: MenuView[];
   ingredientMap: Map<string, Ingredient>;
   prepMap: Map<string, Prep>;
@@ -963,6 +1034,10 @@ export interface UseDataResult {
   duplicateMenu: typeof duplicateMenu;
   removeMenu: typeof removeMenu;
   addCategory: typeof addCategory;
+  addFixedCost: typeof addFixedCost;
+  updateFixedCost: typeof updateFixedCost;
+  removeFixedCost: typeof removeFixedCost;
+  setOperatingDays: typeof setOperatingDays;
   loadSampleData: typeof loadSampleData;
   clearAll: typeof clearAll;
 }
@@ -983,6 +1058,8 @@ export function useData(): UseDataResult {
   const preps = useMemo(() => state.data.preps ?? [], [state.data.preps]);
   const supplies = useMemo(() => state.data.supplies ?? [], [state.data.supplies]);
   const purchases = useMemo(() => state.data.purchases ?? [], [state.data.purchases]);
+  const fixedCosts = useMemo(() => state.data.fixedCosts ?? [], [state.data.fixedCosts]);
+  const operatingDays = normalizeOperatingDays(state.data.operatingDays);
 
   const ingredientMap = useMemo(() => toIngredientMap(ingredients), [ingredients]);
   const prepMap = useMemo(() => new Map(preps.map((p) => [p.id, p])), [preps]);
@@ -1018,6 +1095,8 @@ export function useData(): UseDataResult {
       preps,
       supplies,
       purchases,
+      fixedCosts,
+      operatingDays,
       menuViews,
       ingredientMap,
       prepMap,
@@ -1045,6 +1124,10 @@ export function useData(): UseDataResult {
       duplicateMenu,
       removeMenu,
       addCategory,
+      addFixedCost,
+      updateFixedCost,
+      removeFixedCost,
+      setOperatingDays,
       loadSampleData,
       clearAll,
     }),
@@ -1060,6 +1143,8 @@ export function useData(): UseDataResult {
       preps,
       supplies,
       purchases,
+      fixedCosts,
+      operatingDays,
       menuViews,
       ingredientMap,
       prepMap,

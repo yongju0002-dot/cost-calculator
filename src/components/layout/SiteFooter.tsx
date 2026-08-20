@@ -10,6 +10,7 @@ const SERVICE_LINKS = [
   { href: '/preps', label: '프렙' },
   { href: '/supplies', label: '부자재' },
   { href: '/menus', label: '메뉴' },
+  { href: '/breakeven', label: '손익분기점' },
   { href: '/guide', label: '사용 방법' },
 ];
 
