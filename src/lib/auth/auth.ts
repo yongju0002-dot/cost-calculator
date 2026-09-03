@@ -106,6 +106,14 @@ function toSessionUser(session: Session | null): SessionUser | null {
 
 let supabaseSyncStarted = false;
 
+/**
+ * 로그인 서버 응답을 기다리는 한계 시간.
+ *
+ * 이 시간이 지나면 "로그인 안 된 상태"로 보고 화면을 그린다. 나중에 응답이 오면
+ * 그때 반영되므로, 네트워크가 느린 것뿐이라면 잠시 뒤 정상으로 돌아온다.
+ */
+const SESSION_READY_TIMEOUT_MS = 4000;
+
 /** 세션을 읽어오고, 이후 로그인/로그아웃을 계속 반영한다. */
 function startSupabaseSync(): void {
   if (supabaseSyncStarted) return;
@@ -116,19 +124,80 @@ function startSupabaseSync(): void {
   }
   supabaseSyncStarted = true;
 
+  /*
+   * 응답이 없어도 화면은 반드시 그린다.
+   *
+   * supabase-js 는 네트워크 오류를 "재시도 가능"(AuthRetryableFetchError)으로 보고
+   * 계속 다시 시도한다. 그래서 로그인 서버에 아예 닿지 못하면 getSession() 이 끝나지
+   * 않고, ready 가 false 로 남아 모든 화면이 `if (!ready) return null` 때문에 빈
+   * 화면이 된다. 실제로 Supabase 프로젝트 주소가 사라졌을 때 사이트 전체가 흰 화면이
+   * 됐다 — 로그인 없이도 쓸 수 있어야 하는 앱이 로그인 서버 때문에 통째로 멈춘 셈이다.
+   *
+   * 그래서 시간이 지나면 일단 "비로그인"으로 진행시킨다. 로컬 저장 데이터로 원가 계산은
+   * 그대로 할 수 있다. 응답이 늦게라도 오면 아래 then/onAuthStateChange 가 덮어쓴다.
+   */
+  const readyTimer = setTimeout(() => {
+    if (!store.getSnapshot().ready) store.replace({ user: null, ready: true });
+  }, SESSION_READY_TIMEOUT_MS);
+
   supabase.auth
     .getSession()
-    .then(({ data }) => store.replace({ user: toSessionUser(data.session), ready: true }))
-    .catch(() => store.replace({ user: null, ready: true }));
+    .then(({ data }) => {
+      clearTimeout(readyTimer);
+      store.replace({ user: toSessionUser(data.session), ready: true });
+    })
+    .catch(() => {
+      clearTimeout(readyTimer);
+      store.replace({ user: null, ready: true });
+    });
 
   supabase.auth.onAuthStateChange((_event, session) => {
+    clearTimeout(readyTimer);
     store.replace({ user: toSessionUser(session), ready: true });
   });
+}
+
+/** 로그인 서버에 닿지 못했을 때 보여줄 문구. */
+const AUTH_UNREACHABLE_MESSAGE =
+  '로그인 서버에 연결할 수 없습니다. 인터넷 연결을 확인하고 잠시 후 다시 시도해주세요. (로그인 없이도 원가 계산은 사용할 수 있습니다)';
+
+/** 로그인 서버 요청을 기다리는 한계 시간. */
+const AUTH_REQUEST_TIMEOUT_MS = 12000;
+
+/**
+ * 응답이 없으면 안내 문구와 함께 실패시킨다.
+ *
+ * supabase-js 는 네트워크 오류를 "재시도 가능"으로 보고 계속 다시 시도한다. 그래서
+ * 서버에 아예 닿지 못하면 요청이 끝나지 않고, 화면은 "로그인 중" 상태로 굳은 채
+ * 아무 안내도 나오지 않는다. (Supabase 프로젝트가 일시 중단됐을 때 실제로 그랬다)
+ */
+async function withAuthTimeout<T>(promise: PromiseLike<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(AUTH_UNREACHABLE_MESSAGE)), AUTH_REQUEST_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Supabase 가 돌려주는 영어 오류를 사장님이 이해할 수 있는 문장으로 바꾼다. */
 export function toKoreanAuthError(message: string): string {
   const m = message.toLowerCase();
+  // 로그인 서버에 아예 닿지 못한 경우 (주소가 잘못됐거나 서버가 내려간 경우).
+  // supabase-js 가 "Failed to fetch" 같은 영어 메시지를 그대로 던지므로 따로 걸러준다.
+  if (
+    m.includes('failed to fetch') ||
+    m.includes('networkerror') ||
+    m.includes('network request failed') ||
+    m.includes('retryable')
+  ) {
+    return AUTH_UNREACHABLE_MESSAGE;
+  }
   if (m.includes('invalid login credentials')) return '이메일 또는 비밀번호가 올바르지 않습니다.';
   if (m.includes('email not confirmed')) return '가입 확인 메일의 링크를 먼저 눌러주세요.';
   if (m.includes('already registered') || m.includes('already been registered')) {
@@ -199,11 +268,13 @@ export async function signUp(input: {
 
   const supabase = getSupabase();
   if (supabase) {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password: input.password,
-      options: { data: { name }, emailRedirectTo: callbackUrl('/dashboard') },
-    });
+    const { data, error } = await withAuthTimeout(
+      supabase.auth.signUp({
+        email,
+        password: input.password,
+        options: { data: { name }, emailRedirectTo: callbackUrl('/dashboard') },
+      }),
+    );
     if (error) throw new Error(toKoreanAuthError(error.message));
     return { needsEmailConfirm: !data.session };
   }
@@ -236,7 +307,9 @@ export async function signIn(input: { email: string; password: string }): Promis
 
   const supabase = getSupabase();
   if (supabase) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password: input.password });
+    const { error } = await withAuthTimeout(
+      supabase.auth.signInWithPassword({ email, password: input.password }),
+    );
     if (error) throw new Error(toKoreanAuthError(error.message));
     return;
   }
@@ -285,9 +358,11 @@ export async function requestPasswordReset(email: string): Promise<void> {
   // 실제 링크 형식(token_hash 방식)은 Supabase 대시보드의 "Reset Password" 메일
   // 템플릿에서 결정된다 ( /auth/confirm?token_hash=...&type=recovery&next=... ).
   // 여기서 넘기는 redirectTo 는 그 템플릿이 {{ .RedirectTo }} 를 쓸 때를 위한 보조값이다.
-  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-    redirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent('/auth/reset-password')}`,
-  });
+  const { error } = await withAuthTimeout(
+    supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent('/auth/reset-password')}`,
+    }),
+  );
   if (error) throw new Error(toKoreanAuthError(error.message));
 }
 
@@ -295,7 +370,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
 export async function updatePasswordAfterReset(newPassword: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
-  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  const { error } = await withAuthTimeout(supabase.auth.updateUser({ password: newPassword }));
   if (error) throw new Error(toKoreanAuthError(error.message));
 }
 
@@ -303,11 +378,13 @@ export async function updatePasswordAfterReset(newPassword: string): Promise<voi
 export async function verifyPassword(password: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
-  const { data } = await supabase.auth.getSession();
+  const { data } = await withAuthTimeout(supabase.auth.getSession());
   const email = data.session?.user.email;
   if (!email) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await withAuthTimeout(
+    supabase.auth.signInWithPassword({ email, password }),
+  );
   if (error) throw new Error('비밀번호가 올바르지 않습니다.');
 }
 
@@ -320,7 +397,9 @@ export async function changePassword(input: {
   if (!supabase) throw new Error('이 브라우저 계정은 지원하지 않는 기능입니다.');
   await verifyPassword(input.currentPassword);
 
-  const { error } = await supabase.auth.updateUser({ password: input.newPassword });
+  const { error } = await withAuthTimeout(
+    supabase.auth.updateUser({ password: input.newPassword }),
+  );
   if (error) throw new Error(toKoreanAuthError(error.message));
 }
 
