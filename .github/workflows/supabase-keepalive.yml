@@ -1,0 +1,84 @@
+# Supabase 프로젝트가 일시 중단되지 않게 주기적으로 깨워둔다.
+#
+# 왜 필요한가:
+#   Supabase 무료 플랜은 프로젝트로 오는 요청이 7일간 하나도 없으면 자동으로
+#   일시 중단한다. 중단되면 프로젝트 주소가 DNS 에서 사라져 로그인이 아예 안 된다.
+#   (2026-08-21 에 실제로 그렇게 중단돼서 로그인이 막혔다)
+#
+#   wongago 는 로그인 없이도 원가 계산이 되도록 만들어져 있어서, 일주일 동안
+#   아무도 로그인하지 않으면 Supabase 입장에서는 "안 쓰는 프로젝트"가 된다.
+#   그래서 사람이 안 들어와도 3일마다 조회 1건을 보내 중단 타이머를 리셋한다.
+#
+# 덤으로 감시 역할도 한다: 프로젝트가 중단되거나 키가 바뀌면 이 작업이 실패하고
+# GitHub 가 메일을 보내주므로, 사장님이 사이트에서 발견하기 전에 알 수 있다.
+#
+# 준비물 (저장소 Settings → Secrets and variables → Actions 에 등록):
+#   SUPABASE_URL              예) https://xxxxxxxx.supabase.co   (경로 없이 도메인만)
+#   SUPABASE_PUBLISHABLE_KEY  Supabase 대시보드의 publishable 키 (브라우저에 노출되는 공개 키)
+#
+# 주의: GitHub 는 저장소에 60일간 아무 활동이 없으면 예약 작업을 자동으로 끈다.
+#       그 전에 메일로 알려주며, 코드를 계속 올리는 동안에는 해당되지 않는다.
+
+name: Supabase 깨어있게 유지
+
+on:
+  schedule:
+    # 3일마다 새벽 3시(UTC). 7일 한도에 넉넉히 못 미치게 잡았다.
+    - cron: '0 3 */3 * *'
+  # 대시보드에서 손으로 바로 돌려볼 수 있게 열어둔다.
+  workflow_dispatch:
+
+# 앞선 실행이 아직 돌고 있으면 굳이 겹쳐 돌리지 않는다.
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Supabase 에 조회 1건 보내기
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_PUBLISHABLE_KEY:-}" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY 시크릿이 등록되지 않았습니다."
+            echo "저장소 Settings → Secrets and variables → Actions 에서 두 값을 추가해주세요."
+            exit 1
+          fi
+
+          # 실제로 DB 를 읽는 요청을 보낸다. 헬스체크만으로는 "데이터베이스 활동" 으로
+          # 인정되지 않을 수 있어서, 행 하나만 읽는 가장 가벼운 쿼리를 쓴다.
+          # RLS 때문에 로그인 없는 요청에는 행이 안 보이므로 정상 응답은 200 + "[]" 이다.
+          response=$(curl -sS -m 30 --retry 3 --retry-delay 5 --retry-connrefused \
+            -w '\n%{http_code}' \
+            -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_PUBLISHABLE_KEY}" \
+            "${SUPABASE_URL}/rest/v1/app_data?select=user_id&limit=1" 2>&1) || true
+
+          if [ -z "${response}" ]; then
+            echo "::error::Supabase 에 연결하지 못했습니다. 프로젝트가 중단됐을 수 있습니다."
+            exit 1
+          fi
+
+          status=$(printf '%s' "${response}" | tail -n 1)
+          body=$(printf '%s' "${response}" | sed '$d')
+
+          echo "HTTP 상태: ${status}"
+          echo "응답 본문: ${body}"
+
+          case "${status}" in
+            2*)
+              echo "정상입니다 — 활동이 기록되어 중단 타이머가 리셋됩니다."
+              ;;
+            *)
+              echo "::error::예상치 못한 응답입니다 (HTTP ${status})."
+              echo "프로젝트가 일시 중단됐거나, 키/주소가 바뀌었을 수 있습니다."
+              echo "Supabase 대시보드에서 프로젝트 상태를 확인해주세요."
+              exit 1
+              ;;
+          esac
